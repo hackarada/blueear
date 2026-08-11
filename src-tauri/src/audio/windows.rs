@@ -320,7 +320,8 @@ mod native {
             use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
             use windows::Win32::Media::Audio::{
                 ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation,
-                IActivateAudioInterfaceCompletionHandler, IAudioCaptureClient, IAudioClient,
+                IActivateAudioInterfaceCompletionHandler,
+                IActivateAudioInterfaceCompletionHandler_Impl, IAudioCaptureClient, IAudioClient,
                 AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED,
                 AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
                 AUDIOCLIENT_ACTIVATION_PARAMS, AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
