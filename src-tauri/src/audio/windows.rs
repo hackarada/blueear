@@ -316,7 +316,7 @@ mod native {
             use std::ptr;
             use std::sync::Mutex as StdMutex;
 
-            use windows::core::{implement, Interface, Result as WinResult, GUID};
+            use windows::core::{implement, Interface, Result as WinResult, HRESULT};
             use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
             use windows::Win32::Media::Audio::{
                 ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation,
@@ -327,14 +327,13 @@ mod native {
                 AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS,
                 PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE, WAVEFORMATEX, WAVE_FORMAT_PCM,
             };
+            use windows::Win32::System::Com::StructuredStorage::InitPropVariantFromBuffer;
             use windows::Win32::System::Com::{
-                CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
+                CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED,
             };
             use windows::Win32::System::Threading::{
                 CreateEventW, SetEvent, WaitForSingleObject, INFINITE,
             };
-            use windows::Win32::System::Variant::{VARIANT, VT_BLOB};
-            use windows::core::HRESULT;
 
             // VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK device string
             const PROCESS_LOOPBACK_DEVICE: windows::core::PCWSTR =
@@ -412,21 +411,16 @@ mod native {
                     ProcessLoopbackMode: PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
                 };
 
-                let mut variant = VARIANT::default();
-                // VT_BLOB holding AUDIOCLIENT_ACTIVATION_PARAMS
-                (*variant.Anonymous.Anonymous).vt = VT_BLOB;
-                (*variant.Anonymous.Anonymous).Anonymous.blob.cbSize =
-                    std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>() as u32;
-                (*variant.Anonymous.Anonymous).Anonymous.blob.pBlobData =
-                    &mut activation as *mut _ as *mut u8;
+                let propvariant = InitPropVariantFromBuffer(
+                    &activation as *const _ as *const core::ffi::c_void,
+                    std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>() as u32,
+                )?;
 
-                let mut async_op = None;
-                ActivateAudioInterfaceAsync(
+                let _async_op = ActivateAudioInterfaceAsync(
                     PROCESS_LOOPBACK_DEVICE,
                     &IAudioClient::IID,
-                    Some(std::mem::transmute(&mut variant)),
+                    Some(&propvariant as *const _),
                     &handler,
-                    &mut async_op,
                 )?;
 
                 WaitForSingleObject(event, INFINITE);
@@ -501,7 +495,6 @@ mod native {
                 let _ = client.Stop();
                 let _ = CloseHandle(ready);
                 let _ = CloseHandle(event);
-                let _ = (GUID::zeroed(), CLSCTX_ALL);
                 Ok(())
             }
         }

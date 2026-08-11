@@ -5,10 +5,15 @@ use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=icons/tray-icon.png");
-    tauri_build::build();
 
+    // Build / stage the Swift dylib *before* `tauri_build::build()`.
+    // `tauri.conf.json` lists it under `bundle.macOS.frameworks`, and Tauri
+    // validates that path during codegen — a fresh CI checkout has no
+    // `.build/bundled` yet if Swift runs after tauri_build.
     #[cfg(target_os = "macos")]
     build_native_audio();
+
+    tauri_build::build();
 }
 
 /// Builds the linked `BlueEarAudio` Swift package (Core Audio process-tap

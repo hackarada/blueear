@@ -661,6 +661,7 @@ mod tests {
         });
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_symlink_anywhere_in_the_tree_is_rejected() {
         with_home(|| {

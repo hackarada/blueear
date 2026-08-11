@@ -248,14 +248,22 @@ pub fn list_in_progress_dirs() -> io::Result<Vec<PathBuf>> {
 /// Available disk space at (or above) `path`, in bytes. Returns `None` if it
 /// cannot be determined rather than failing the caller.
 pub fn available_bytes(path: &Path) -> Option<u64> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
     let probe_path = if path.exists() {
         path.to_path_buf()
     } else {
-        path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("/"))
+        path.parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "C:\\" } else { "/" }))
     };
+
+    available_bytes_impl(&probe_path)
+}
+
+#[cfg(unix)]
+fn available_bytes_impl(probe_path: &Path) -> Option<u64> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
     let c_path = CString::new(probe_path.as_os_str().as_bytes()).ok()?;
     unsafe {
         let mut stat: libc::statvfs = std::mem::zeroed();
@@ -265,6 +273,36 @@ pub fn available_bytes(path: &Path) -> Option<u64> {
             None
         }
     }
+}
+
+#[cfg(windows)]
+fn available_bytes_impl(probe_path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+
+    let wide: Vec<u16> = probe_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        let mut free_bytes_available = 0u64;
+        GetDiskFreeSpaceExW(
+            PCWSTR(wide.as_ptr()),
+            Some(&mut free_bytes_available),
+            None,
+            None,
+        )
+        .ok()?;
+        Some(free_bytes_available)
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn available_bytes_impl(_probe_path: &Path) -> Option<u64> {
+    None
 }
 
 /// Detect which meeting WAV filename is present in an in-progress or recovered dir.
