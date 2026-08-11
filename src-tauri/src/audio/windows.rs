@@ -123,8 +123,9 @@ impl WindowsAudioEngine {
         let stop_flag = Arc::clone(&stop);
         let join = thread::spawn(move || {
             let _ = inner.status_tx.send((StatusEvent::MicStarted, 0));
-            match native::run_microphone_capture(&stop_flag, |samples, frames, ch, rate| {
-                push_pcm(&inner.mic_tx, samples, frames, ch, rate);
+            let callback_inner = Arc::clone(&inner);
+            match native::run_microphone_capture(&stop_flag, move |samples, frames, ch, rate| {
+                push_pcm(&callback_inner.mic_tx, samples, frames, ch, rate);
             }) {
                 Ok(()) => {
                     let _ = inner.status_tx.send((StatusEvent::MicStopped, 0));
