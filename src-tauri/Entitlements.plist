@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  App Sandbox is deliberately OFF for v1: Core Audio process taps
+	  (AudioHardwareCreateProcessTap) are unavailable to sandboxed apps.
+	  Hardened Runtime stays ON so the app can still be notarized for
+	  Developer ID distribution outside the Mac App Store.
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+	<!--
+	  SECURITY-REVIEW: Hardened Runtime's default library validation only
+	  allows loading dylibs signed with the same Team ID as the main
+	  executable (or Apple platform binaries). The linked BlueEarAudio.dylib
+	  is a first-party sibling target built and ad-hoc signed in the same
+	  build (see src-tauri/build.rs and native/BlueEarAudio/), so with no
+	  paid Developer ID certificate yet, ad-hoc signing gives it a distinct
+	  self-referential identity with no Team ID to match against, and dyld
+	  refuses to load it ("different Team IDs") unless validation is
+	  disabled here. This does not weaken sandboxing (already off, see
+	  above) and does not permit loading arbitrary third-party code; it
+	  only affects whether *this app's own* non-matching-identity dylib can
+	  load. Once the app is signed with a real Developer ID, both the main
+	  executable and BlueEarAudio.dylib will share that Team ID and this
+	  entitlement can be set back to false.
+	-->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>

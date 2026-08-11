@@ -1,0 +1,4 @@
+/target/
+/native/BlueEarAudio/.build/
+/native/BlueEarAudio/.swiftpm/
+/gen/schemas

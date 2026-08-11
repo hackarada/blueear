@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for Blue Ear's single main window. No filesystem, shell, or network plugin permissions are granted: all disk and process access happens exclusively inside app-defined Rust commands, which resolve every path server-side from generated session IDs.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default"
+  ]
+}

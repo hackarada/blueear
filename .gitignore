@@ -1,0 +1,44 @@
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Rust / Tauri
+src-tauri/target/
+
+# Swift package build artifacts
+native/**/.build/
+native/**/.swiftpm/
+src-tauri/native/**/.build/
+src-tauri/native/**/.swiftpm/
+
+# Local recordings should never be committed
+Recordings/
+*.wav
+!tests/fixtures/**/*.wav
+
+# Product/architecture docs stay local for now
+docs/
+
+# Local diagnostic spikes (not part of the public tree)
+spike/

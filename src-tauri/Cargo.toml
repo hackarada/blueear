@@ -1,0 +1,64 @@
+[package]
+name = "blueear"
+version = "0.1.0"
+description = "Blue Ear: local-first recorder for native Teams and Zoom meeting audio"
+authors = ["Blue Ear"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "blueear_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+# Tauri CLI builds with `--no-default-features`, so Whisper is also listed under
+# `tauri.conf.json` → `build.features` for `tauri dev` / `tauri build`.
+default = ["whisper"]
+# Shared Whisper.cpp provider (whisper-rs). Requires cmake + a C++ toolchain.
+whisper = ["dep:whisper-rs"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "protocol-asset", "image-png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+hound = "3"
+rtrb = "0.3"
+log = "0.4"
+# Verifies every file in an imported model bundle against its manifest digest.
+sha2 = "0.10"
+dirs = "5"
+# Optional Whisper.cpp bindings; inert until the provider is selected and ready.
+whisper-rs = { version = "0.13", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_Media_Audio",
+  "Win32_System_Com",
+  "Win32_System_Threading",
+  "Win32_System_Variant",
+  "implement",
+] }
+winreg = "0.52"
+sysinfo = "0.33"
+cpal = "0.15"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+rfd = "0.15"
+

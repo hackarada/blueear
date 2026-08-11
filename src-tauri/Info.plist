@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Merged into the generated app bundle's Info.plist by Tauri's macOS
+	  bundler. These two keys back the two TCC (Transparency, Consent, and
+	  Control) permission categories Blue Ear needs:
+
+	    - NSAudioCaptureUsageDescription gates kTCCServiceAudioCapture,
+	      which the Core Audio process-tap capture of meeting audio requires
+	      (macOS 14.2+). This is a distinct permission from Screen
+	      Recording and from Microphone.
+	    - NSMicrophoneUsageDescription gates the optional local microphone
+	      track.
+	-->
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Blue Ear records Microsoft Teams or Zoom meeting audio locally on this Mac using Core Audio process taps. Audio never leaves this device.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Blue Ear can optionally record your microphone alongside meeting audio. This is off by default and only used if you enable it before recording.</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.4</string>
+</dict>
+</plist>

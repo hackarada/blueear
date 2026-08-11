@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Blue Ear symbol</title>
+  <desc id="desc">A blue ear-shaped audio symbol with a waveform and three sound waves.</desc>
+  <defs>
+    <linearGradient id="brandGradient" x1="70" y1="80" x2="440" y2="425" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#39C4FF"/>
+      <stop offset="0.48" stop-color="#0A84FF"/>
+      <stop offset="1" stop-color="#0757D7"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(23 54) scale(1.08)" fill="none" stroke="url(#brandGradient)" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M86 179 C86 99 142 45 218 45 C294 45 340 99 340 169 C340 198 330 219 311 237" stroke-width="30"/>
+    <path d="M89 208 C112 241 134 275 154 303 C170 325 192 337 218 337 C256 337 284 311 284 275 C284 255 292 243 311 231" stroke-width="30"/>
+    <path d="M70 202 H109 L121 181 L134 227 L150 151 L166 257 L184 126 L201 248 L219 163 L233 228 L247 189 L261 202 H300" stroke-width="11"/>
+    <path d="M338 143 C355 163 355 210 338 230" stroke-width="11"/>
+    <path d="M365 124 C391 153 391 220 365 249" stroke-width="11"/>
+    <path d="M392 105 C429 145 429 229 392 268" stroke-width="11"/>
+  </g>
+</svg>
