@@ -392,7 +392,9 @@ fn collect_files(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<(), S
             let relative = path
                 .strip_prefix(root)
                 .map_err(|_| "bundle contains an unreachable path".to_string())?;
-            out.push(relative.to_string_lossy().into_owned());
+            // Manifests always use `/` separators; normalize so Windows walks
+            // compare equal to the declared paths.
+            out.push(relative.to_string_lossy().replace('\\', "/"));
         } else {
             return Err("bundle contains an unsupported file type".to_string());
         }
