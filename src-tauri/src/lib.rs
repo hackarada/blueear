@@ -89,13 +89,23 @@ pub fn run() {
         .run(|app_handle, event| {
             // macOS-only: `applicationShouldHandleReopen`, fired when the
             // Dock icon is clicked while the app has no visible windows.
-            if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } = event
+            {
                 if !has_visible_windows {
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.show();
                         let _ = window.set_focus();
                     }
                 }
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (app_handle, event);
             }
         });
 }

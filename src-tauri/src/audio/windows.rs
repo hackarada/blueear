@@ -270,6 +270,7 @@ mod native {
     pub fn default_capture_available() -> bool {
         // Presence of a default capture endpoint is enough for readiness; the
         // real open happens when mic capture starts.
+        use cpal::traits::HostTrait;
         cpal::default_host()
             .default_input_device()
             .is_some()
@@ -288,7 +289,7 @@ mod native {
 
     pub fn run_microphone_capture<F>(stop: &AtomicBool, on_pcm: F) -> Result<(), i32>
     where
-        F: FnMut(&[f32], u32, u32, f64),
+        F: FnMut(&[f32], u32, u32, f64) + Send,
     {
         mic_capture::capture(stop, on_pcm)
     }
@@ -351,7 +352,7 @@ mod native {
                 shared: Arc<SharedClient>,
             }
 
-            impl IActivateAudioInterfaceCompletionHandler_Impl for Handler {
+            impl IActivateAudioInterfaceCompletionHandler_Impl for Handler_Impl {
                 fn ActivateCompleted(
                     &self,
                     op: Option<&IActivateAudioInterfaceAsyncOperation>,
@@ -434,7 +435,7 @@ mod native {
                     .ok_or_else(|| windows::core::Error::from(HRESULT(0x80004005u32 as i32)))?;
 
                 let format = WAVEFORMATEX {
-                    wFormatTag: WAVE_FORMAT_PCM,
+                    wFormatTag: WAVE_FORMAT_PCM as u16,
                     nChannels: 2,
                     nSamplesPerSec: 48000,
                     nAvgBytesPerSec: 48000 * 2 * 2,
@@ -506,7 +507,7 @@ mod native {
 
         pub fn capture<F>(stop: &AtomicBool, mut on_pcm: F) -> Result<(), i32>
         where
-            F: FnMut(&[f32], u32, u32, f64),
+            F: FnMut(&[f32], u32, u32, f64) + Send,
         {
             use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
