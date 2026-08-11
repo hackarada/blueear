@@ -289,7 +289,7 @@ mod native {
 
     pub fn run_microphone_capture<F>(stop: &AtomicBool, on_pcm: F) -> Result<(), i32>
     where
-        F: FnMut(&[f32], u32, u32, f64) + Send,
+        F: FnMut(&[f32], u32, u32, f64) + Send + 'static,
     {
         mic_capture::capture(stop, on_pcm)
     }
@@ -507,7 +507,7 @@ mod native {
 
         pub fn capture<F>(stop: &AtomicBool, mut on_pcm: F) -> Result<(), i32>
         where
-            F: FnMut(&[f32], u32, u32, f64) + Send,
+            F: FnMut(&[f32], u32, u32, f64) + Send + 'static,
         {
             use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
