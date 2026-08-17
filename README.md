@@ -30,13 +30,20 @@ optionally records your microphone, and produces synchronized `meeting.wav`,
 
 - macOS 14.4 or later on Apple Silicon or Intel.
 - Xcode / the Swift toolchain (`swift build` must work) and the Rust toolchain.
-- Node.js 18+ for the frontend.
+- Node.js 22+ for the frontend.
+- CMake when building with Whisper (the default). `brew install cmake`.
 
 ### Windows
 
 - Windows 10 **build 20348** or later (process loopback API).
-- MSVC toolchain, Windows SDK, WebView2, Rust, Node.js 18+.
-- CMake (for the optional Whisper.cpp provider).
+- MSVC toolchain, Windows SDK, WebView2, Rust, Node.js 22+.
+- CMake when building with Whisper (the default).
+
+CMake is required on both platforms because the Whisper Cargo feature is on by
+default. To skip Whisper.cpp (and CMake), build Cargo with
+`--no-default-features` and clear `build.features` in
+`src-tauri/tauri.conf.json`. `make dev-no-whisper` and `make build-no-whisper`
+do the Tauri side via `--config`.
 
 ### Meeting apps (both platforms)
 
@@ -66,9 +73,12 @@ ASR adapters on macOS. Windows capture lives in Rust (`audio/windows.rs`).
 ## Running in development
 
 ```bash
-npm install
-npm run tauri dev
+make install && make dev
+# or: npm install && npm run tauri dev
 ```
+
+`make help` lists the other targets. Whisper is on by default, so CMake must
+be on PATH. To run without it: `make dev-no-whisper`.
 
 ### macOS
 
@@ -86,7 +96,8 @@ prompt.
 ### macOS `.app`
 
 ```bash
-npm run tauri build -- --bundles app
+make build-macos
+# or: npm run tauri build -- --bundles app
 ```
 
 Produces `src-tauri/target/release/bundle/macos/Blue Ear.app`. macOS builds are
@@ -97,7 +108,8 @@ notarized Developer ID distribution is optional and environment-specific.
 ### Windows installer
 
 ```bash
-npm run tauri build -- --bundles nsis
+make build-windows
+# or: npm run tauri build -- --bundles nsis
 # or: --bundles msi
 ```
 
@@ -116,8 +128,9 @@ Optional and off by default (`none`). Providers:
 Whisper links Whisper.cpp via `whisper-rs` (Cargo feature `whisper`, on by
 default and also listed in `tauri.conf.json` `build.features` because
 `tauri dev`/`build` pass `--no-default-features`). Building it needs CMake and
-a C++ compiler. Disable with `--no-default-features` (and clear
-`build.features`) if you only need the recorder.
+a C++ compiler on macOS and Windows. If you only need the recorder, skip it
+with `make dev-no-whisper` / `make build-no-whisper` / `make test-rust-no-whisper`,
+or by passing Cargo `--no-default-features` and clearing `build.features`.
 
 ## Menu bar and recordings library
 
@@ -129,10 +142,10 @@ Windows).
 ## Testing
 
 ```bash
-npm test                 # frontend unit tests
-cd src-tauri
-cargo test               # DSP, ring buffer, WAV crash-safety, recovery, transcription contracts
-cargo test -- --ignored --nocapture live_   # requires a real, running Teams or Zoom
+make test                # frontend unit tests + cargo test
+make test-frontend       # npm test
+make test-rust           # DSP, ring buffer, WAV crash-safety, recovery, transcription contracts
+make live-test           # requires a real, running Teams or Zoom
 ```
 
 ## Output layout
