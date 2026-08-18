@@ -15,7 +15,6 @@ import {
   type SessionState,
 } from "../types/recording";
 import { SourceReadiness } from "./SourceReadiness";
-import { BrandLogo } from "./ui/BrandLogo";
 import { Button } from "./ui/Button";
 import { Toggle } from "./ui/Toggle";
 
@@ -97,12 +96,9 @@ export function Recorder({
 
   return (
     <div className="screen recorder">
-      <div className="brand-header">
-        <BrandLogo size={32} />
-        <div className="brand-header__text">
-          <h1>Blue Ear</h1>
-          <p>Local meeting recorder</p>
-        </div>
+      <div className="screen-header">
+        <h2>Record</h2>
+        <p>Isolate Teams or Zoom audio on this computer.</p>
       </div>
 
       {!isActive && !isTransitioning && (

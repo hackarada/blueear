@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 
+import { Home } from "../components/Home";
 import { Onboarding } from "../components/Onboarding";
 import { Recorder } from "../components/Recorder";
 import { Recordings } from "../components/Recordings";
 import { SessionResult } from "../components/SessionResult";
+import { Sidebar, type AppView } from "../components/Sidebar";
 import { TranscriptionSettings } from "../components/TranscriptionSettings";
 import { Button } from "../components/ui/Button";
 import { ThemeSelector } from "../components/ui/ThemeSelector";
 import { useRecordingSession } from "../hooks/useRecordingSession";
 import { useTranscriptionSettings } from "../hooks/useTranscriptionSettings";
+import { meetingAppSummary } from "../lib/recordingUi";
+import { canTranscribe } from "../lib/transcriptionUi";
 import { warningLabelFor } from "../lib/warnings";
 import { onNavigate } from "./recordingApi";
 import { openModelDownloadPage } from "./transcriptionApi";
@@ -19,7 +23,7 @@ const ONBOARDING_KEY = "blueear.onboarding.acknowledged";
 export default function App() {
   const [onboarded, setOnboarded] = useState(() => localStorage.getItem(ONBOARDING_KEY) === "1");
   const [probing, setProbing] = useState(false);
-  const [view, setView] = useState<"recorder" | "recordings" | "transcription">("recorder");
+  const [view, setView] = useState<AppView>("home");
 
   const {
     readiness,
@@ -67,7 +71,14 @@ export default function App() {
     setProbing(false);
   };
 
-  const content = useMemo(() => {
+  const recordingActive =
+    sessionState.state === "preparing" ||
+    sessionState.state === "recording" ||
+    sessionState.state === "recovering" ||
+    sessionState.state === "stopping" ||
+    sessionState.state === "finalizing";
+
+  const sessionScreen = useMemo(() => {
     if (sessionState.state === "completed") {
       return (
         <SessionResult
@@ -78,6 +89,7 @@ export default function App() {
           onRecordAnother={() => {
             void dismiss();
             void refreshReadiness();
+            setView("recorder");
           }}
         />
       );
@@ -96,6 +108,7 @@ export default function App() {
             onClick={() => {
               void dismiss();
               void refreshReadiness();
+              setView("recorder");
             }}
           >
             Try again
@@ -135,35 +148,37 @@ export default function App() {
     );
   }
 
-  const nav = (
-    <div className="nav-bar">
-      <div className="nav-bar__start">
-        {view !== "recorder" && (
-          <Button variant="ghost" onClick={() => setView("recorder")}>
-            Back
-          </Button>
-        )}
-      </div>
-      <div className="nav-bar__end">
-        {view === "recorder" && (
-          <>
-            <Button variant="ghost" onClick={() => setView("recordings")}>
-              Recordings
-            </Button>
-            <Button variant="ghost" onClick={() => setView("transcription")}>
-              Transcription
-            </Button>
-          </>
-        )}
-        <ThemeSelector />
-      </div>
-    </div>
-  );
+  const lastSession = recentSessions[0] ?? null;
+  const homeShowsSession = view === "home" && recordingActive;
 
-  if (view === "recordings") {
-    return (
-      <div className="app-shell">
-        {nav}
+  let main = null;
+  switch (view) {
+    case "home":
+      main = homeShowsSession ? (
+        sessionScreen
+      ) : (
+        <Home
+          lastSession={lastSession}
+          transcriptionOverview={transcription.overview}
+          meetingAppSummary={meetingAppSummary(readiness?.meetingApps)}
+          onStartRecording={() => {
+            if (sessionState.state === "completed" || sessionState.state === "failed") {
+              void dismiss();
+            }
+            setView("recorder");
+          }}
+          onOpenLastSession={() => setView("recordings")}
+          onTranscribe={() =>
+            setView(canTranscribe(transcription.overview) && lastSession ? "recordings" : "transcription")
+          }
+        />
+      );
+      break;
+    case "recorder":
+      main = sessionScreen;
+      break;
+    case "recordings":
+      main = (
         <Recordings
           sessions={recentSessions}
           transcriptionOverview={transcription.overview}
@@ -171,14 +186,10 @@ export default function App() {
           onRefresh={refreshRecentSessions}
           onOpenTranscriptionSettings={() => setView("transcription")}
         />
-      </div>
-    );
-  }
-
-  if (view === "transcription") {
-    return (
-      <div className="app-shell">
-        {nav}
+      );
+      break;
+    case "transcription":
+      main = (
         <TranscriptionSettings
           overview={transcription.overview}
           busy={transcription.busy}
@@ -188,14 +199,18 @@ export default function App() {
           onDeleteBundle={(bundleId) => void transcription.deleteBundle(bundleId)}
           onOpenModelPage={(page) => void openModelDownloadPage(page)}
         />
-      </div>
-    );
+      );
+      break;
+    default: {
+      const _never: never = view;
+      main = _never;
+    }
   }
 
   return (
     <div className="app-shell">
-      {nav}
-      {content}
+      <Sidebar view={view} recordingActive={recordingActive} onNavigate={setView} />
+      <div className="app-main">{main}</div>
     </div>
   );
 }

@@ -6,6 +6,7 @@ import {
   availableTracks,
   canEnableMicrophone,
   canStartRecording,
+  meetingAppSummary,
 } from "./recordingUi";
 
 const ready: Readiness = {
@@ -103,5 +104,28 @@ describe("availableTracks", () => {
         microphoneWav: "microphone.wav",
       }),
     ).toEqual(["meeting", "microphone", "mixed"]);
+  });
+});
+
+describe("meetingAppSummary", () => {
+  it("lists running apps", () => {
+    expect(meetingAppSummary(ready.meetingApps)).toBe("Microsoft Teams running");
+    expect(
+      meetingAppSummary([
+        { displayName: "Microsoft Teams", running: true },
+        { displayName: "Zoom", running: true },
+      ]),
+    ).toBe("Microsoft Teams and Zoom running");
+  });
+
+  it("says none are running when every app is closed", () => {
+    expect(
+      meetingAppSummary([{ displayName: "Microsoft Teams", running: false }]),
+    ).toBe("None running");
+  });
+
+  it("is pending before readiness loads", () => {
+    expect(meetingAppSummary(undefined)).toBe("Checking...");
+    expect(meetingAppSummary([])).toBe("Checking...");
   });
 });

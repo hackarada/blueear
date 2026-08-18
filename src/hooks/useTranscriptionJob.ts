@@ -79,8 +79,17 @@ export function useTranscriptionJob(sessionId: string) {
   const cancel = useCallback(() => run(() => cancelTranscription(sessionId)), [run, sessionId]);
 
   const exportAs = useCallback(
-    (format: ExportFormat) => run(() => exportTranscript(sessionId, format)),
-    [run, sessionId],
+    async (format: ExportFormat) => {
+      setError(null);
+      try {
+        await exportTranscript(sessionId, format);
+        return true;
+      } catch (err) {
+        if (mountedRef.current) setError(describeError(err));
+        return false;
+      }
+    },
+    [sessionId],
   );
 
   return { job, transcript, error, start, retry, cancel, exportAs };

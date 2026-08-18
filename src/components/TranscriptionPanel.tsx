@@ -1,8 +1,10 @@
-import { FileText, RotateCcw, Type, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronRight, FileText, RotateCcw, Type, X } from "lucide-react";
 
 import { useTranscriptionJob } from "../hooks/useTranscriptionJob";
 import {
   canTranscribe,
+  exportFilename,
   formatTimecode,
   isJobResumable,
   isJobRunning,
@@ -11,23 +13,53 @@ import {
   speakerLabel,
   TRANSCRIPT_TRACK_LABELS,
 } from "../lib/transcriptionUi";
-import type { TranscriptionOverview } from "../types/transcription";
+import type { ExportFormat, TranscriptionOverview } from "../types/transcription";
 import { Button } from "./ui/Button";
+import { ConfirmBar } from "./ui/ConfirmBar";
 
 interface TranscriptionPanelProps {
   sessionId: string;
   overview: TranscriptionOverview | null;
   onOpenSettings: () => void;
+  defaultTranscriptOpen?: boolean;
 }
 
 export function TranscriptionPanel({
   sessionId,
   overview,
   onOpenSettings,
+  defaultTranscriptOpen = false,
 }: TranscriptionPanelProps) {
   const { job, transcript, error, start, retry, cancel, exportAs } = useTranscriptionJob(sessionId);
   const running = isJobRunning(job);
   const provider = selectedProvider(overview);
+  const [transcriptOpen, setTranscriptOpen] = useState(defaultTranscriptOpen);
+  const [pendingExport, setPendingExport] = useState<ExportFormat | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedLabel, setSavedLabel] = useState<string | null>(null);
+  const wasRunning = useRef(false);
+
+  useEffect(() => {
+    if (running) {
+      wasRunning.current = true;
+      return;
+    }
+    if (wasRunning.current && transcript) {
+      setTranscriptOpen(true);
+      wasRunning.current = false;
+    }
+  }, [running, transcript]);
+
+  const confirmSave = async () => {
+    if (!pendingExport) return;
+    setSaving(true);
+    const ok = await exportAs(pendingExport);
+    setSaving(false);
+    if (ok) {
+      setSavedLabel(exportFilename(pendingExport));
+      setPendingExport(null);
+    }
+  };
 
   // With no provider configured this is a recorder, and saying so beats an
   // action that can only fail. Once one is chosen but not ready, the settings
@@ -83,17 +115,31 @@ export function TranscriptionPanel({
       {error && <div className="banner error">{error}</div>}
 
       {transcript && !running && (
-        <div className="transcript-view">
-          {transcript.segments.map((segment, index) => (
-            <p key={`${segment.startSeconds}-${index}`} className="transcript-segment">
-              <span className="transcript-segment__time">
-                {formatTimecode(segment.startSeconds)}
-              </span>
-              <span className="transcript-segment__speaker">{speakerLabel(segment.speaker)}</span>
-              <span className="transcript-segment__text">{segment.text}</span>
-            </p>
-          ))}
-        </div>
+        <>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="transcript-toggle"
+            aria-expanded={transcriptOpen}
+            onClick={() => setTranscriptOpen((open) => !open)}
+          >
+            {transcriptOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            {transcriptOpen ? "Hide transcript" : "View transcript"}
+          </Button>
+          {transcriptOpen && (
+            <div className="transcript-view">
+              {transcript.segments.map((segment, index) => (
+                <p key={`${segment.startSeconds}-${index}`} className="transcript-segment">
+                  <span className="transcript-segment__time">
+                    {formatTimecode(segment.startSeconds)}
+                  </span>
+                  <span className="transcript-segment__speaker">{speakerLabel(segment.speaker)}</span>
+                  <span className="transcript-segment__text">{segment.text}</span>
+                </p>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       <div className="controls">
@@ -116,13 +162,27 @@ export function TranscriptionPanel({
                 Transcribe
               </Button>
             )}
-            {transcript && (
+            {transcript && pendingExport === null && (
               <>
-                <Button variant="secondary" size="sm" onClick={() => void exportAs("text")}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setSavedLabel(null);
+                    setPendingExport("text");
+                  }}
+                >
                   <Type size={14} />
                   Save as text
                 </Button>
-                <Button variant="secondary" size="sm" onClick={() => void exportAs("vtt")}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setSavedLabel(null);
+                    setPendingExport("vtt");
+                  }}
+                >
                   <FileText size={14} />
                   Save as VTT
                 </Button>
@@ -131,6 +191,21 @@ export function TranscriptionPanel({
           </>
         )}
       </div>
+
+      {pendingExport && (
+        <ConfirmBar
+          message={`Save ${exportFilename(pendingExport)} next to this recording? If the file already exists, it will be replaced.`}
+          confirmLabel="Save"
+          busy={saving}
+          onConfirm={() => void confirmSave()}
+          onCancel={() => setPendingExport(null)}
+        />
+      )}
+      {savedLabel && !pendingExport && (
+        <p className="settings-hint" role="status">
+          Saved {savedLabel}.
+        </p>
+      )}
     </div>
   );
 }

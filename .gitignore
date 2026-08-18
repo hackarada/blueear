@@ -37,7 +37,6 @@ Recordings/
 *.wav
 !tests/fixtures/**/*.wav
 
-# Product/architecture docs stay local for now
 docs/
 
 # Local diagnostic spikes (not part of the public tree)

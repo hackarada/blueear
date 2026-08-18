@@ -36,3 +36,13 @@ export function availableTracks(session: SessionMetadata): RecordingTrack[] {
   tracks.push("mixed");
   return tracks;
 }
+
+export function meetingAppSummary(
+  apps: { displayName: string; running: boolean }[] | undefined,
+): string {
+  if (!apps || apps.length === 0) return "Checking...";
+  const running = apps.filter((app) => app.running).map((app) => app.displayName);
+  if (running.length === 0) return "None running";
+  if (running.length === 1) return `${running[0]} running`;
+  return `${running.join(" and ")} running`;
+}

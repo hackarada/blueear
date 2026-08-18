@@ -3,6 +3,7 @@
 // components so it can be tested directly.
 
 import type {
+  ExportFormat,
   Job,
   JobStatus,
   ProviderStatus,
@@ -116,4 +117,17 @@ export function formatTimecode(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds));
   const minutes = Math.floor(total / 60);
   return `${minutes}:${(total % 60).toString().padStart(2, "0")}`;
+}
+
+export function exportFilename(format: ExportFormat): string {
+  switch (format) {
+    case "text":
+      return "transcript.txt";
+    case "vtt":
+      return "transcript.vtt";
+    default: {
+      const _never: never = format;
+      return _never;
+    }
+  }
 }

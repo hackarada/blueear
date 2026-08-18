@@ -59,6 +59,7 @@ export function SessionResult({
         sessionId={metadata.sessionId}
         overview={transcriptionOverview}
         onOpenSettings={onOpenTranscriptionSettings}
+        defaultTranscriptOpen
       />
 
       <div className="controls stacked">

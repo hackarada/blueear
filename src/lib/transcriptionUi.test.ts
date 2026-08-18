@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   canTranscribe,
+  exportFilename,
   formatBundleSize,
   formatTimecode,
   isJobResumable,
@@ -158,5 +159,10 @@ describe("formatting", () => {
     expect(formatTimecode(0)).toBe("0:00");
     expect(formatTimecode(75.9)).toBe("1:15");
     expect(formatTimecode(-3)).toBe("0:00");
+  });
+
+  it("names the files written beside a recording", () => {
+    expect(exportFilename("text")).toBe("transcript.txt");
+    expect(exportFilename("vtt")).toBe("transcript.vtt");
   });
 });
