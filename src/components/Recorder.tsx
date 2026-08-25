@@ -53,7 +53,7 @@ export function Recorder({
   onStart,
   onStop,
 }: RecorderProps) {
-  const [includeMicrophone, setIncludeMicrophone] = useState(false);
+  const [includeMicrophone, setIncludeMicrophone] = useState(true);
   const [sourceApp, setSourceApp] = useState<MeetingAppId | null>(null);
   const [, setTick] = useState(0);
 
@@ -63,6 +63,12 @@ export function Recorder({
       setSourceApp((prev) => prev ?? auto);
     }
   }, [readiness]);
+
+  useEffect(() => {
+    if (readiness && !readiness.microphoneAvailable) {
+      setIncludeMicrophone(false);
+    }
+  }, [readiness?.microphoneAvailable]);
 
   useEffect(() => {
     if (sessionState.state !== "recording" && sessionState.state !== "recovering") return;

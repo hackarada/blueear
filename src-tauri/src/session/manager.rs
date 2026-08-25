@@ -130,7 +130,7 @@ impl SessionManager {
             app_handle,
             state: Mutex::new(SessionState::Idle),
             permission_state: Mutex::new(PermissionState::NeedsProbe),
-            last_include_microphone: Mutex::new(false),
+            last_include_microphone: Mutex::new(true),
             last_source_app: Mutex::new(MeetingAppId::Teams),
             active: Mutex::new(None),
         })
@@ -288,7 +288,7 @@ impl SessionManager {
     }
 
     pub fn preferred_include_microphone(&self) -> bool {
-        *self.last_include_microphone.lock().unwrap()
+        *self.last_include_microphone.lock().unwrap() && self.engine.microphone_input_available()
     }
 
     pub fn preferred_source_app(&self) -> MeetingAppId {
