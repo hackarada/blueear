@@ -6,9 +6,10 @@
 use serde::{Deserialize, Serialize};
 
 #[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum MeetingAppId {
+    #[default]
     Teams = 0,
     Zoom = 1,
 }
@@ -50,12 +51,6 @@ impl MeetingAppId {
             "zoom" => Some(Self::Zoom),
             _ => None,
         }
-    }
-}
-
-impl Default for MeetingAppId {
-    fn default() -> Self {
-        MeetingAppId::Teams
     }
 }
 

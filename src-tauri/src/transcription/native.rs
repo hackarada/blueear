@@ -35,6 +35,8 @@ use crate::transcription::types::{
 };
 
 type ProgressCallbackC = extern "C" fn(*mut c_void, u64, f64);
+type ProgressSinkFn = Arc<dyn Fn(f32) + Send + Sync>;
+type ProgressSinkTable = Mutex<HashMap<u64, ProgressSinkFn>>;
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 extern "C" {
@@ -129,10 +131,9 @@ fn map_not_ready_reason(reason: Option<&str>) -> NotReadyReason {
 /// Native progress arrives as a job handle plus a fraction, on whatever thread
 /// the adapter happens to be on. This table routes each handle back to the
 /// Rust closure that owns it, so the C callback itself stays a pure lookup.
-static PROGRESS_SINKS: OnceLock<Mutex<HashMap<u64, Arc<dyn Fn(f32) + Send + Sync>>>> =
-    OnceLock::new();
+static PROGRESS_SINKS: OnceLock<ProgressSinkTable> = OnceLock::new();
 
-fn progress_sinks() -> &'static Mutex<HashMap<u64, Arc<dyn Fn(f32) + Send + Sync>>> {
+fn progress_sinks() -> &'static ProgressSinkTable {
     PROGRESS_SINKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -276,7 +277,7 @@ impl ProgressRelay {
         // was registered under.
         let sink: &'static ProgressSink<'static> =
             unsafe { std::mem::transmute::<&ProgressSink<'_>, &'static ProgressSink<'static>>(progress) };
-        let boxed: Arc<dyn Fn(f32) + Send + Sync> = Arc::new(move |fraction| sink(fraction));
+        let boxed: ProgressSinkFn = Arc::new(sink);
         if let Ok(mut guard) = progress_sinks().lock() {
             guard.insert(handle, boxed);
         }

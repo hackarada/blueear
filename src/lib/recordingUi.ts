@@ -33,7 +33,7 @@ export function availableTracks(session: SessionMetadata): RecordingTrack[] {
   const tracks: RecordingTrack[] = [];
   if (session.meetingWav) tracks.push("meeting");
   if (session.micEnabled && session.microphoneWav) tracks.push("microphone");
-  tracks.push("mixed");
+  if (session.mixedWav) tracks.push("mixed");
   return tracks;
 }
 

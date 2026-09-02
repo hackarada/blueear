@@ -100,7 +100,11 @@ fn recover_one(dir: &Path) -> std::io::Result<()> {
         } else {
             None
         },
-        mixed_wav: "mixed.wav".to_string(),
+        mixed_wav: if mixed_present {
+            Some("mixed.wav".to_string())
+        } else {
+            None
+        },
         source_app,
         app_bundle_id: crate::APP_BUNDLE_ID.to_string(),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -139,12 +143,11 @@ mod tests {
             let mut meeting =
                 CheckpointingWavWriter::create(&paths.meeting_wav(), 48_000).unwrap();
             meeting.write_samples(&vec![0.5; 4800]).unwrap();
-            let mut mixed = CheckpointingWavWriter::create(&paths.mixed_wav(), 48_000).unwrap();
-            mixed.write_samples(&vec![0.5; 4800]).unwrap();
         }
-        // No microphone.wav and no session.json -- matches a mic-off
-        // recording that crashed before `stop_recording` ran.
+        // No microphone.wav, no mixed.wav, and no session.json -- matches a
+        // mic-off recording that crashed before `stop_recording` ran.
         assert!(!paths.microphone_wav().exists());
+        assert!(!paths.mixed_wav().exists());
         assert!(!paths.metadata_json().exists());
 
         recover_incomplete_sessions();
@@ -163,6 +166,7 @@ mod tests {
         assert!(recovered.recovered, "session must be flagged recovered");
         assert!(recovered.interrupted, "session must be flagged interrupted");
         assert!(!recovered.mic_enabled);
+        assert_eq!(recovered.mixed_wav, None);
         assert_eq!(recovered.session_id, "crash-test-session");
         assert_eq!(recovered.source_app, MeetingAppId::Zoom);
 
@@ -174,7 +178,9 @@ mod tests {
         let meeting_samples =
             wav_writer::read_all_samples(&final_paths.meeting_wav_for(recovered)).unwrap();
         assert_eq!(meeting_samples.len(), 4800);
-        assert!(meeting_samples.iter().all(|&s| (s - 0.5).abs() < 1e-6));
+        assert!(meeting_samples
+            .iter()
+            .all(|&s| (s - 0.5).abs() < 2.0 / i16::MAX as f32));
     }
 
     /// A directory that crashed before any writer ever created a WAV file
@@ -219,6 +225,35 @@ mod tests {
         let sessions = session_store::list_finalized_sessions(10).unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].meeting_wav.as_deref(), Some("teams.wav"));
+        assert_eq!(sessions[0].mixed_wav.as_deref(), Some("mixed.wav"));
         assert_eq!(sessions[0].source_app, MeetingAppId::Teams);
+    }
+
+    #[test]
+    fn mic_on_crash_recovers_all_three_tracks() {
+        let _guard = HOME_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempdir().unwrap();
+        std::env::set_var("HOME", home.path());
+
+        let paths =
+            session_store::create_in_progress_dir("crash-mic-on", MeetingAppId::Teams).unwrap();
+        {
+            let mut meeting =
+                CheckpointingWavWriter::create(&paths.meeting_wav(), 48_000).unwrap();
+            meeting.write_samples(&vec![0.25; 1200]).unwrap();
+            let mut mic =
+                CheckpointingWavWriter::create(&paths.microphone_wav(), 48_000).unwrap();
+            mic.write_samples(&vec![0.25; 1200]).unwrap();
+            let mut mixed = CheckpointingWavWriter::create(&paths.mixed_wav(), 48_000).unwrap();
+            mixed.write_samples(&vec![0.25; 1200]).unwrap();
+        }
+
+        recover_incomplete_sessions();
+
+        let sessions = session_store::list_finalized_sessions(10).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert!(sessions[0].mic_enabled);
+        assert_eq!(sessions[0].microphone_wav.as_deref(), Some("microphone.wav"));
+        assert_eq!(sessions[0].mixed_wav.as_deref(), Some("mixed.wav"));
     }
 }

@@ -21,8 +21,8 @@
 
 A local-first desktop app that isolates native Microsoft Teams or Zoom meeting
 audio (Core Audio process taps on macOS; WASAPI process loopback on Windows),
-optionally records your microphone, and produces synchronized `meeting.wav`,
-`microphone.wav`, and `mixed.wav` tracks for every session. Nothing is uploaded.
+optionally records your microphone, and produces synchronized 16-bit PCM WAV
+tracks for every session. Nothing is uploaded.
 
 ## Requirements
 
@@ -153,9 +153,9 @@ make live-test           # requires a real, running Teams or Zoom
 ```
 ~/Music/BlueEar/Recordings/          (or %USERPROFILE%\Music\BlueEar\Recordings)
 └── 2026-08-07_10-30-00/
-    ├── meeting.wav
-    ├── microphone.wav   (omitted if microphone capture was off)
-    ├── mixed.wav
+    ├── meeting.wav          16-bit PCM, 48 kHz, mono
+    ├── microphone.wav       omitted if microphone capture was off
+    ├── mixed.wav            omitted if microphone capture was off
     └── session.json
 ```
 
@@ -165,7 +165,7 @@ make live-test           # requires a real, running Teams or Zoom
 - One meeting app per recording session.
 - Optional local transcription; off by default.
 - No calendar integration or automatic start/stop.
-- No compression, custom output folders, or editing.
+- No lossy compression, custom output folders, or editing.
 - macOS builds are ad-hoc signed / not notarized out of the box.
 
 ## License

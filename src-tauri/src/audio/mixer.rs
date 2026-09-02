@@ -1,7 +1,7 @@
-//! Combines the (already mono, 48kHz) Teams and microphone timelines into a
-//! single convenience playback track. Only the mixed track is limited; the
-//! per-source `teams.wav` / `microphone.wav` files stay untouched so nothing
-//! is lost to the limiter.
+//! Combines the (already mono, 48kHz) meeting and microphone timelines into a
+//! single convenience playback track. Only written when the microphone is on;
+//! with the mic off the mix would duplicate `meeting.wav`. The per-source
+//! files stay untouched so nothing is lost to the limiter.
 
 /// Conservative fixed gain applied to each source before summing, leaving
 /// headroom so two simultaneous full-scale sources don't automatically
@@ -36,7 +36,7 @@ mod tests {
     #[test]
     fn mixing_two_loud_sources_never_exceeds_full_scale() {
         let mixed = mix_frame(Some(1.0), Some(1.0));
-        assert!(mixed <= 1.0 && mixed >= -1.0);
+        assert!((-1.0..=1.0).contains(&mixed));
     }
 
     #[test]

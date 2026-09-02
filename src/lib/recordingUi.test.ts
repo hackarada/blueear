@@ -86,24 +86,29 @@ describe("availableTracks", () => {
     sampleRate: 48_000,
     meetingWav: "meeting.wav",
     microphoneWav: null,
-    mixedWav: "mixed.wav",
+    mixedWav: null,
     sourceApp: "teams",
     appBundleId: "com.blueear.app",
     appVersion: "0.1.0",
   };
 
-  it("always includes mixed and meeting when present", () => {
-    expect(availableTracks(base)).toEqual(["meeting", "mixed"]);
+  it("includes meeting only when the mix was not written", () => {
+    expect(availableTracks(base)).toEqual(["meeting"]);
   });
 
-  it("includes microphone only when recorded", () => {
+  it("includes microphone and mixed when recorded", () => {
     expect(
       availableTracks({
         ...base,
         micEnabled: true,
         microphoneWav: "microphone.wav",
+        mixedWav: "mixed.wav",
       }),
     ).toEqual(["meeting", "microphone", "mixed"]);
+  });
+
+  it("still lists mixed on older mic-off sessions that kept the file", () => {
+    expect(availableTracks({ ...base, mixedWav: "mixed.wav" })).toEqual(["meeting", "mixed"]);
   });
 });
 

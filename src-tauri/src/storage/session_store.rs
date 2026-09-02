@@ -7,6 +7,9 @@
 //! Schema version 2 renames the meeting track to `meeting.wav` / `meetingWav`
 //! and records `sourceApp`. v1 sessions that wrote `teams.wav` still load via
 //! serde aliases and filename resolution from metadata.
+//!
+//! `mixedWav` is optional: new sessions omit the mix file when the microphone
+//! is off (it would duplicate `meeting.wav`). Older files always have it.
 
 use std::fs;
 use std::io;
@@ -40,7 +43,10 @@ pub struct SessionMetadata {
     #[serde(alias = "teamsWav")]
     pub meeting_wav: Option<String>,
     pub microphone_wav: Option<String>,
-    pub mixed_wav: String,
+    /// Convenience mix of meeting + microphone. Absent when the microphone
+    /// was off, because that mix would just be a quieter copy of `meeting.wav`.
+    #[serde(default)]
+    pub mixed_wav: Option<String>,
     /// Which meeting app produced the meeting track. Missing on v1 files;
     /// defaults to Teams when deserializing.
     #[serde(default)]
@@ -203,7 +209,7 @@ pub fn resolve_track_path(
             Some(paths.meeting_wav_for(metadata))
         }
         "microphone" if metadata.microphone_wav.is_some() => Some(paths.microphone_wav()),
-        "mixed" => Some(paths.mixed_wav()),
+        "mixed" if metadata.mixed_wav.is_some() => Some(paths.mixed_wav()),
         _ => None,
     }
 }
@@ -360,7 +366,7 @@ mod tests {
             sample_rate: 48_000,
             meeting_wav: Some("meeting.wav".into()),
             microphone_wav: Some("microphone.wav".into()),
-            mixed_wav: "mixed.wav".into(),
+            mixed_wav: Some("mixed.wav".into()),
             source_app: MeetingAppId::Zoom,
             app_bundle_id: "com.blueear.app".into(),
             app_version: "0.1.0".into(),
@@ -394,8 +400,34 @@ mod tests {
         }"#;
         let meta: SessionMetadata = serde_json::from_str(json).unwrap();
         assert_eq!(meta.meeting_wav.as_deref(), Some("teams.wav"));
+        assert_eq!(meta.mixed_wav.as_deref(), Some("mixed.wav"));
         assert_eq!(meta.dropped_meeting_frames, 3);
         assert_eq!(meta.source_app, MeetingAppId::Teams);
+    }
+
+    #[test]
+    fn missing_mixed_wav_deserializes_as_none() {
+        let json = r#"{
+            "schemaVersion": 2,
+            "sessionId": "no-mix",
+            "startedAt": "2026-01-01T00:00:00Z",
+            "endedAt": "2026-01-01T00:01:00Z",
+            "durationSeconds": 60.0,
+            "micEnabled": false,
+            "recovered": false,
+            "interrupted": false,
+            "droppedMeetingFrames": 0,
+            "droppedMicFrames": 0,
+            "sampleRate": 48000,
+            "meetingWav": "meeting.wav",
+            "microphoneWav": null,
+            "sourceApp": "zoom",
+            "appBundleId": "com.blueear.app",
+            "appVersion": "0.1.0"
+        }"#;
+        let meta: SessionMetadata = serde_json::from_str(json).unwrap();
+        assert_eq!(meta.mixed_wav, None);
+        assert_eq!(meta.source_app, MeetingAppId::Zoom);
     }
 
     fn sample_metadata(session_id: &str, mic_enabled: bool) -> SessionMetadata {
@@ -413,7 +445,7 @@ mod tests {
             sample_rate: 48_000,
             meeting_wav: Some("meeting.wav".into()),
             microphone_wav: mic_enabled.then(|| "microphone.wav".into()),
-            mixed_wav: "mixed.wav".into(),
+            mixed_wav: mic_enabled.then(|| "mixed.wav".into()),
             source_app: MeetingAppId::Teams,
             app_bundle_id: "com.blueear.app".into(),
             app_version: "0.1.0".into(),
@@ -421,13 +453,15 @@ mod tests {
     }
 
     #[test]
-    fn resolve_track_path_returns_mixed_track_unconditionally() {
+    fn resolve_track_path_returns_mixed_only_when_recorded() {
         let paths = SessionPaths { dir: PathBuf::from("/tmp/session") };
-        let metadata = sample_metadata("session-mixed", false);
+        let with_mix = sample_metadata("session-mixed", true);
         assert_eq!(
-            resolve_track_path(&paths, &metadata, "mixed"),
+            resolve_track_path(&paths, &with_mix, "mixed"),
             Some(paths.mixed_wav())
         );
+        let no_mix = sample_metadata("session-no-mix", false);
+        assert_eq!(resolve_track_path(&paths, &no_mix, "mixed"), None);
     }
 
     #[test]

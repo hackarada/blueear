@@ -25,9 +25,10 @@ pub const JOB_SCHEMA_VERSION: u32 = 1;
 /// all. `none` is a real, first-class selection rather than an absent value:
 /// the plan requires that a user who never configures transcription gets WAV
 /// output and nothing else, with no engine quietly promoted in the background.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderId {
+    #[default]
     None,
     AppleSpeech,
     #[serde(rename = "fluidaudio")]
@@ -43,12 +44,6 @@ impl ProviderId {
             ProviderId::FluidAudio => "fluidaudio",
             ProviderId::Whisper => "whisper",
         }
-    }
-}
-
-impl Default for ProviderId {
-    fn default() -> Self {
-        ProviderId::None
     }
 }
 

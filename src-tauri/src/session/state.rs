@@ -16,9 +16,10 @@ use crate::storage::session_store::SessionMetadata;
 // camelCase, silently producing `undefined` for fields like `sessionId`
 // (which then vanishes entirely once passed back into an `invoke()` call,
 // since JSON serialization drops `undefined`-valued keys).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum SessionState {
+    #[default]
     Idle,
     #[serde(rename_all = "camelCase")]
     Preparing {
@@ -52,12 +53,6 @@ pub enum SessionState {
     Failed {
         error: AppError,
     },
-}
-
-impl Default for SessionState {
-    fn default() -> Self {
-        SessionState::Idle
-    }
 }
 
 impl SessionState {

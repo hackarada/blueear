@@ -371,8 +371,14 @@ impl SessionManager {
         } else {
             None
         };
-        let mixed_writer = CheckpointingWavWriter::create(&paths.mixed_wav(), sample_rate)
-            .map_err(|_| AppError::internal("create_mixed_wav"))?;
+        let mixed_writer = if include_microphone {
+            Some(
+                CheckpointingWavWriter::create(&paths.mixed_wav(), sample_rate)
+                    .map_err(|_| AppError::internal("create_mixed_wav"))?,
+            )
+        } else {
+            None
+        };
 
         let (meeting_producer, meeting_consumer) = ring::channel();
         if let Err(code) = self.engine.start_meeting_capture(source_app, meeting_producer) {
@@ -406,19 +412,20 @@ impl SessionManager {
         let worker_io_failed = Arc::clone(&io_failed_flag);
         let worker_levels = Arc::clone(&levels);
         let worker = thread::spawn(move || {
-            recording_worker(
-                meeting_consumer,
-                mic_consumer,
-                worker_paths,
-                include_microphone,
+            RecordingWorker {
+                meeting_rx: meeting_consumer,
+                mic_rx: mic_consumer,
+                paths: worker_paths,
+                mic_enabled: include_microphone,
                 meeting_writer,
                 mic_writer,
                 mixed_writer,
-                worker_stop_flag,
-                worker_disk_low,
-                worker_io_failed,
-                worker_levels,
-            )
+                stop_flag: worker_stop_flag,
+                disk_low_flag: worker_disk_low,
+                io_failed_flag: worker_io_failed,
+                levels: worker_levels,
+            }
+            .run()
         });
 
         let started_at = Utc::now();
@@ -547,7 +554,11 @@ impl SessionManager {
             } else {
                 None
             },
-            mixed_wav: "mixed.wav".to_string(),
+            mixed_wav: if active.mic_enabled {
+                Some("mixed.wav".to_string())
+            } else {
+                None
+            },
             source_app: active.source_app,
             app_bundle_id: crate::APP_BUNDLE_ID.to_string(),
             app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -588,6 +599,7 @@ impl SessionManager {
         let paths = session_store::find_session_by_id(session_id)
             .map_err(|_| AppError::internal("find_session_by_id"))?
             .ok_or_else(AppError::session_not_found)?;
+        let target = reveal_target(&paths);
 
         // SECURITY-REVIEW: reveals a path resolved entirely server-side from a
         // generated session ID looked up on disk -- never from a
@@ -596,7 +608,7 @@ impl SessionManager {
         {
             std::process::Command::new("open")
                 .arg("-R")
-                .arg(paths.mixed_wav())
+                .arg(&target)
                 .spawn()
                 .map_err(|_| AppError::internal("open -R"))?;
         }
@@ -604,13 +616,13 @@ impl SessionManager {
         {
             std::process::Command::new("explorer")
                 .arg("/select,")
-                .arg(paths.mixed_wav())
+                .arg(&target)
                 .spawn()
                 .map_err(|_| AppError::internal("explorer /select"))?;
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
-            let _ = paths;
+            let _ = target;
             return Err(AppError::internal("reveal_session unsupported"));
         }
         Ok(())
@@ -687,6 +699,21 @@ fn current_platform() -> &'static str {
 
 const MIX_LOOKAHEAD_CAP: usize = CANONICAL_SAMPLE_RATE as usize * 5;
 
+/// Prefer a real WAV so Finder/Explorer can select a file; fall back to the
+/// session directory if nothing was written (should not happen for finalized
+/// sessions).
+fn reveal_target(paths: &SessionPaths) -> std::path::PathBuf {
+    [
+        paths.mixed_wav(),
+        paths.meeting_wav(),
+        paths.dir.join("teams.wav"),
+        paths.microphone_wav(),
+    ]
+    .into_iter()
+    .find(|p| p.exists())
+    .unwrap_or_else(|| paths.dir.clone())
+}
+
 fn write_samples_checked(
     writer: &mut CheckpointingWavWriter,
     samples: &[f32],
@@ -709,6 +736,7 @@ fn process_chunk(
     session_start_ns: &mut Option<u64>,
     writer: &mut CheckpointingWavWriter,
     pending: &mut VecDeque<f32>,
+    collect_mix: bool,
     io_failed: &AtomicBool,
 ) -> Option<f32> {
     if io_failed.load(Ordering::Relaxed) {
@@ -733,12 +761,16 @@ fn process_chunk(
             if !write_samples_checked(writer, &pad, io_failed) {
                 return None;
             }
-            pending.extend(pad);
+            if collect_mix {
+                pending.extend(pad);
+            }
         }
         if !write_samples_checked(writer, &mono, io_failed) {
             return None;
         }
-        pending.extend(mono.iter().copied());
+        if collect_mix {
+            pending.extend(mono.iter().copied());
+        }
     }
 
     mono.iter()
@@ -748,74 +780,75 @@ fn process_chunk(
 fn drain_mix(
     pending_meeting: &mut VecDeque<f32>,
     pending_mic: &mut VecDeque<f32>,
-    mic_enabled: bool,
     mixed_writer: &mut CheckpointingWavWriter,
     io_failed: &AtomicBool,
 ) {
     if io_failed.load(Ordering::Relaxed) {
         return;
     }
-    let n = if mic_enabled {
-        pending_meeting.len().min(pending_mic.len())
-    } else {
-        pending_meeting.len()
-    };
+    let n = pending_meeting.len().min(pending_mic.len());
 
-    if mic_enabled {
-        if n > 0 {
-            let mut buf = Vec::with_capacity(n);
-            for _ in 0..n {
-                let t = pending_meeting.pop_front().unwrap();
-                let m = pending_mic.pop_front().unwrap();
-                buf.push(mix_frame(Some(t), Some(m)));
-            }
-            if !write_samples_checked(mixed_writer, &buf, io_failed) {
-                return;
-            }
+    if n > 0 {
+        let mut buf = Vec::with_capacity(n);
+        for _ in 0..n {
+            let t = pending_meeting.pop_front().unwrap();
+            let m = pending_mic.pop_front().unwrap();
+            buf.push(mix_frame(Some(t), Some(m)));
         }
-        if pending_meeting.len() > MIX_LOOKAHEAD_CAP {
-            let excess = pending_meeting.len() - MIX_LOOKAHEAD_CAP;
-            let buf: Vec<f32> = (0..excess)
-                .filter_map(|_| pending_meeting.pop_front())
-                .map(|t| mix_frame(Some(t), None))
-                .collect();
-            if !write_samples_checked(mixed_writer, &buf, io_failed) {
-                return;
-            }
+        if !write_samples_checked(mixed_writer, &buf, io_failed) {
+            return;
         }
-        if pending_mic.len() > MIX_LOOKAHEAD_CAP {
-            let excess = pending_mic.len() - MIX_LOOKAHEAD_CAP;
-            let buf: Vec<f32> = (0..excess)
-                .filter_map(|_| pending_mic.pop_front())
-                .map(|m| mix_frame(None, Some(m)))
-                .collect();
-            if !write_samples_checked(mixed_writer, &buf, io_failed) {
-                return;
-            }
-        }
-    } else if !pending_meeting.is_empty() {
-        let buf: Vec<f32> = pending_meeting
-            .drain(..)
+    }
+    if pending_meeting.len() > MIX_LOOKAHEAD_CAP {
+        let excess = pending_meeting.len() - MIX_LOOKAHEAD_CAP;
+        let buf: Vec<f32> = (0..excess)
+            .filter_map(|_| pending_meeting.pop_front())
             .map(|t| mix_frame(Some(t), None))
+            .collect();
+        if !write_samples_checked(mixed_writer, &buf, io_failed) {
+            return;
+        }
+    }
+    if pending_mic.len() > MIX_LOOKAHEAD_CAP {
+        let excess = pending_mic.len() - MIX_LOOKAHEAD_CAP;
+        let buf: Vec<f32> = (0..excess)
+            .filter_map(|_| pending_mic.pop_front())
+            .map(|m| mix_frame(None, Some(m)))
             .collect();
         let _ = write_samples_checked(mixed_writer, &buf, io_failed);
     }
 }
 
-fn recording_worker(
-    mut meeting_rx: RingConsumer,
-    mut mic_rx: Option<RingConsumer>,
+struct RecordingWorker {
+    meeting_rx: RingConsumer,
+    mic_rx: Option<RingConsumer>,
     paths: SessionPaths,
     mic_enabled: bool,
-    mut meeting_writer: CheckpointingWavWriter,
-    mut mic_writer: Option<CheckpointingWavWriter>,
-    mut mixed_writer: CheckpointingWavWriter,
+    meeting_writer: CheckpointingWavWriter,
+    mic_writer: Option<CheckpointingWavWriter>,
+    mixed_writer: Option<CheckpointingWavWriter>,
     stop_flag: Arc<AtomicBool>,
     disk_low_flag: Arc<AtomicBool>,
     io_failed_flag: Arc<AtomicBool>,
     levels: Arc<LevelMeters>,
-) -> WorkerOutcome {
-    let sample_rate = CANONICAL_SAMPLE_RATE;
+}
+
+impl RecordingWorker {
+    fn run(self) -> WorkerOutcome {
+        let RecordingWorker {
+            mut meeting_rx,
+            mut mic_rx,
+            paths,
+            mic_enabled,
+            mut meeting_writer,
+            mut mic_writer,
+            mut mixed_writer,
+            stop_flag,
+            disk_low_flag,
+            io_failed_flag,
+            levels,
+        } = self;
+        let sample_rate = CANONICAL_SAMPLE_RATE;
     let mut session_start_ns: Option<u64> = None;
     let mut pending_meeting: VecDeque<f32> = VecDeque::new();
     let mut pending_mic: VecDeque<f32> = VecDeque::new();
@@ -840,6 +873,7 @@ fn recording_worker(
                 &mut session_start_ns,
                 &mut meeting_writer,
                 &mut pending_meeting,
+                mic_enabled,
                 &io_failed_flag,
             ) {
                 levels.set_meeting(peak);
@@ -857,6 +891,7 @@ fn recording_worker(
                             &mut session_start_ns,
                             mic_w,
                             &mut pending_mic,
+                            true,
                             &io_failed_flag,
                         ) {
                             levels.set_mic(peak);
@@ -866,13 +901,14 @@ fn recording_worker(
             }
         }
 
-        drain_mix(
-            &mut pending_meeting,
-            &mut pending_mic,
-            mic_enabled,
-            &mut mixed_writer,
-            &io_failed_flag,
-        );
+        if let Some(writer) = mixed_writer.as_mut() {
+            drain_mix(
+                &mut pending_meeting,
+                &mut pending_mic,
+                writer,
+                &io_failed_flag,
+            );
+        }
 
         if last_checkpoint.elapsed() >= checkpoint_interval {
             if !io_failed_flag.load(Ordering::Relaxed) && meeting_writer.checkpoint().is_err() {
@@ -885,8 +921,12 @@ fn recording_worker(
                     }
                 }
             }
-            if !io_failed_flag.load(Ordering::Relaxed) && mixed_writer.checkpoint().is_err() {
-                io_failed_flag.store(true, Ordering::Relaxed);
+            if !io_failed_flag.load(Ordering::Relaxed) {
+                if let Some(w) = mixed_writer.as_mut() {
+                    if w.checkpoint().is_err() {
+                        io_failed_flag.store(true, Ordering::Relaxed);
+                    }
+                }
             }
             last_checkpoint = Instant::now();
         }
@@ -931,6 +971,7 @@ fn recording_worker(
                 &mut session_start_ns,
                 &mut meeting_writer,
                 &mut pending_meeting,
+                mic_enabled,
                 &io_failed_flag,
             ) {
                 levels.set_meeting(peak);
@@ -944,39 +985,35 @@ fn recording_worker(
                     &mut session_start_ns,
                     mic_w,
                     &mut pending_mic,
+                    true,
                     &io_failed_flag,
                 ) {
                     levels.set_mic(peak);
                 }
             }
         }
-        drain_mix(
-            &mut pending_meeting,
-            &mut pending_mic,
-            mic_enabled,
-            &mut mixed_writer,
-            &io_failed_flag,
-        );
+        if let Some(writer) = mixed_writer.as_mut() {
+            drain_mix(
+                &mut pending_meeting,
+                &mut pending_mic,
+                writer,
+                &io_failed_flag,
+            );
+        }
     }
 
     // Anything left unmatched now truly has no partner arriving: flush it
     // paired with silence rather than dropping it.
     if !io_failed_flag.load(Ordering::Relaxed) {
-        if mic_enabled {
+        if let Some(writer) = mixed_writer.as_mut() {
             let n = pending_meeting.len().max(pending_mic.len());
             if n > 0 {
                 let mut buf = Vec::with_capacity(n);
                 for _ in 0..n {
                     buf.push(mix_frame(pending_meeting.pop_front(), pending_mic.pop_front()));
                 }
-                let _ = write_samples_checked(&mut mixed_writer, &buf, &io_failed_flag);
+                let _ = write_samples_checked(writer, &buf, &io_failed_flag);
             }
-        } else if !pending_meeting.is_empty() {
-            let buf: Vec<f32> = pending_meeting
-                .drain(..)
-                .map(|t| mix_frame(Some(t), None))
-                .collect();
-            let _ = write_samples_checked(&mut mixed_writer, &buf, &io_failed_flag);
         }
     }
 
@@ -990,7 +1027,9 @@ fn recording_worker(
     } else {
         0
     };
-    let _ = mixed_writer.finalize();
+    if let Some(w) = mixed_writer {
+        let _ = w.finalize();
+    }
 
     WorkerOutcome {
         meeting_frames,
@@ -999,6 +1038,7 @@ fn recording_worker(
         dropped_mic_frames,
         disk_full: disk_low_flag.load(Ordering::Relaxed),
         write_failed,
+    }
     }
 }
 

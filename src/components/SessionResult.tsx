@@ -51,8 +51,8 @@ export function SessionResult({
 
       <ul className="result-tracks">
         {metadata.meetingWav && <li>{metadata.meetingWav}</li>}
-        {metadata.micEnabled && metadata.microphoneWav && <li>microphone.wav</li>}
-        <li>mixed.wav</li>
+        {metadata.micEnabled && metadata.microphoneWav && <li>{metadata.microphoneWav}</li>}
+        {metadata.mixedWav && <li>{metadata.mixedWav}</li>}
       </ul>
 
       <TranscriptionPanel

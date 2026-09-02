@@ -480,7 +480,7 @@ mod tests {
             sample_rate: 48_000,
             meeting_wav: Some("meeting.wav".into()),
             microphone_wav: mic_enabled.then(|| "microphone.wav".into()),
-            mixed_wav: "mixed.wav".into(),
+            mixed_wav: mic_enabled.then(|| "mixed.wav".into()),
             source_app: crate::audio::MeetingAppId::Teams,
             app_bundle_id: crate::APP_BUNDLE_ID.into(),
             app_version: "0.1.0".into(),

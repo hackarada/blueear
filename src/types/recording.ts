@@ -36,7 +36,7 @@ export interface SessionMetadata {
   sampleRate: number;
   meetingWav: string | null;
   microphoneWav: string | null;
-  mixedWav: string;
+  mixedWav: string | null;
   sourceApp: MeetingAppId;
   appBundleId: string;
   appVersion: string;
