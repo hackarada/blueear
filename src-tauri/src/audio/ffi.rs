@@ -11,8 +11,9 @@
 
 use std::ffi::c_void;
 use std::os::raw::c_float;
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use super::meeting_app::MeetingAppId;
 use super::ring::RingProducer;
@@ -48,9 +49,29 @@ extern "C" {
 }
 
 struct EngineInner {
-    meeting_tx: Mutex<Option<RingProducer>>,
-    mic_tx: Mutex<Option<RingProducer>>,
+    /// Installed before native start; cleared only after native stop returns,
+    /// so the real-time trampoline never takes a lock and never races a free.
+    meeting_tx: AtomicPtr<RingProducer>,
+    mic_tx: AtomicPtr<RingProducer>,
     status_tx: mpsc::Sender<(StatusEvent, i32)>,
+}
+
+fn install_producer(slot: &AtomicPtr<RingProducer>, producer: RingProducer) {
+    let ptr = Box::into_raw(Box::new(producer));
+    let old = slot.swap(ptr, Ordering::AcqRel);
+    if !old.is_null() {
+        // SAFETY: previous value was installed by this module via Box::into_raw.
+        drop(unsafe { Box::from_raw(old) });
+    }
+}
+
+fn clear_producer(slot: &AtomicPtr<RingProducer>) {
+    let old = slot.swap(std::ptr::null_mut(), Ordering::AcqRel);
+    if !old.is_null() {
+        // SAFETY: previous value was installed by this module via Box::into_raw,
+        // and native capture has already stopped so no trampoline holds it.
+        drop(unsafe { Box::from_raw(old) });
+    }
 }
 
 extern "C" fn trampoline_audio(
@@ -74,15 +95,19 @@ extern "C" fn trampoline_audio(
     let len = (frame_count as usize) * (channel_count as usize);
     let slice = unsafe { std::slice::from_raw_parts(samples, len) };
 
-    let target = match source {
+    let slot = match source {
         s if s == AudioSource::Meeting as i32 => &inner.meeting_tx,
         s if s == AudioSource::Microphone as i32 => &inner.mic_tx,
         _ => return,
     };
-    if let Ok(mut guard) = target.lock() {
-        if let Some(producer) = guard.as_mut() {
-            producer.push(slice, frame_count, channel_count, sample_rate, host_time_ns);
-        }
+    let ptr = slot.load(Ordering::Acquire);
+    if ptr.is_null() {
+        return;
+    }
+    // SAFETY: the producer stays alive from install until clear_producer after
+    // native stop, so a live trampoline always sees a valid RingProducer.
+    unsafe {
+        (*ptr).push(slice, frame_count, channel_count, sample_rate, host_time_ns);
     }
 }
 
@@ -103,9 +128,9 @@ pub struct NativeAudioEngine {
     inner: *const EngineInner,
 }
 
-// SAFETY: `EngineInner` only exposes synchronized access (Mutex-guarded
-// producers, an mpsc sender) and the raw pointer is never mutated after
-// construction, so sharing `NativeAudioEngine` across threads is sound.
+// SAFETY: `EngineInner` exposes atomic producer slots and an mpsc sender, and
+// the raw pointer is never mutated after construction, so sharing
+// `NativeAudioEngine` across threads is sound.
 unsafe impl Send for NativeAudioEngine {}
 unsafe impl Sync for NativeAudioEngine {}
 
@@ -113,8 +138,8 @@ impl NativeAudioEngine {
     pub fn new() -> (Self, mpsc::Receiver<(StatusEvent, i32)>) {
         let (status_tx, status_rx) = mpsc::channel();
         let inner = Arc::new(EngineInner {
-            meeting_tx: Mutex::new(None),
-            mic_tx: Mutex::new(None),
+            meeting_tx: AtomicPtr::new(std::ptr::null_mut()),
+            mic_tx: AtomicPtr::new(std::ptr::null_mut()),
             status_tx,
         });
         let raw = Arc::into_raw(inner);
@@ -155,25 +180,27 @@ impl NativeAudioEngine {
         app: MeetingAppId,
         producer: RingProducer,
     ) -> Result<(), i32> {
-        *self.inner().meeting_tx.lock().expect("meeting_tx poisoned") = Some(producer);
+        install_producer(&self.inner().meeting_tx, producer);
         let code = unsafe { blueear_start_meeting_capture(app.as_i32()) };
         if code != 0 {
-            *self.inner().meeting_tx.lock().expect("meeting_tx poisoned") = None;
+            clear_producer(&self.inner().meeting_tx);
             return Err(code);
         }
         Ok(())
     }
 
     pub fn stop_meeting_capture(&self) {
+        // Native stop must finish before clear: the trampoline must not push
+        // into a freed producer, and clearing must not free one mid-push.
         unsafe { blueear_stop_meeting_capture() };
-        *self.inner().meeting_tx.lock().expect("meeting_tx poisoned") = None;
+        clear_producer(&self.inner().meeting_tx);
     }
 
     pub fn start_microphone_capture(&self, producer: RingProducer) -> Result<(), i32> {
-        *self.inner().mic_tx.lock().expect("mic_tx poisoned") = Some(producer);
+        install_producer(&self.inner().mic_tx, producer);
         let code = unsafe { blueear_start_microphone_capture() };
         if code != 0 {
-            *self.inner().mic_tx.lock().expect("mic_tx poisoned") = None;
+            clear_producer(&self.inner().mic_tx);
             return Err(code);
         }
         Ok(())
@@ -181,7 +208,7 @@ impl NativeAudioEngine {
 
     pub fn stop_microphone_capture(&self) {
         unsafe { blueear_stop_microphone_capture() };
-        *self.inner().mic_tx.lock().expect("mic_tx poisoned") = None;
+        clear_producer(&self.inner().mic_tx);
     }
 }
 
@@ -189,6 +216,8 @@ impl Drop for NativeAudioEngine {
     fn drop(&mut self) {
         unsafe {
             blueear_shutdown();
+            clear_producer(&(*self.inner).meeting_tx);
+            clear_producer(&(*self.inner).mic_tx);
             // SAFETY: reclaims exactly the strong reference leaked in
             // `new` via `Arc::into_raw`; runs exactly once since `Drop`
             // only fires once for this value.
