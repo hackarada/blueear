@@ -121,16 +121,16 @@ impl WindowsAudioEngine {
         let stop_flag = Arc::clone(&stop);
         let join = thread::spawn(move || {
             let _ = inner.status_tx.send((StatusEvent::MicStarted, 0));
-            // cpal requires a 'static callback. Box the producer and free it
-            // only after capture returns, so the callback never takes a lock.
-            let producer_ptr = Box::into_raw(Box::new(producer));
+            // cpal requires a 'static + Send callback. Box the producer and
+            // free it only after capture returns, so the callback never locks.
+            let producer = SendProducerPtr(Box::into_raw(Box::new(producer)));
             let result =
                 native::run_microphone_capture(&stop_flag, move |samples, frames, ch, rate| {
-                    // SAFETY: producer_ptr stays live until this call returns.
-                    unsafe { push_pcm(&mut *producer_ptr, samples, frames, ch, rate) };
+                    // SAFETY: the pointer stays live until capture returns.
+                    unsafe { push_pcm(&mut *producer.0, samples, frames, ch, rate) };
                 });
             // SAFETY: capture has returned; no callback still holds the pointer.
-            drop(unsafe { Box::from_raw(producer_ptr) });
+            drop(unsafe { Box::from_raw(producer.0) });
             match result {
                 Ok(()) => {
                     let _ = inner.status_tx.send((StatusEvent::MicStopped, 0));
@@ -170,6 +170,13 @@ fn stop_capture(slot: &Mutex<Option<CaptureHandles>>) {
         }
     }
 }
+
+/// Raw producer pointer for cpal's `'static + Send` mic callback. Safe only
+/// while the owning capture thread keeps the `Box` alive across the call.
+struct SendProducerPtr(*mut RingProducer);
+// SAFETY: the pointer is used only from the capture/callback threads that
+// own this recording; it is never shared with another producer owner.
+unsafe impl Send for SendProducerPtr {}
 
 fn push_pcm(
     producer: &mut RingProducer,
