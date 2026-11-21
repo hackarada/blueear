@@ -150,7 +150,8 @@ mod windows_aac {
 
     use windows::core::HSTRING;
     use windows::Win32::Media::MediaFoundation::{
-        IMFMediaBuffer, IMFSample, IMFSinkWriter, MFAudioFormat_AAC, MFAudioFormat_PCM,
+        IMFAttributes, IMFMediaBuffer, IMFSample, IMFSinkWriter, MFAudioFormat_AAC,
+        MFAudioFormat_PCM,
         MFCreateAttributes, MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample,
         MFCreateSinkWriterFromURL, MFMediaType_Audio, MFShutdown, MFStartup, MFSTARTUP_NOSOCKET,
         MFTranscodeContainerType_MPEG4, MF_MT_AAC_PAYLOAD_TYPE, MF_MT_AUDIO_AVG_BYTES_PER_SECOND,
@@ -197,7 +198,11 @@ mod windows_aac {
         samples: &[i16],
     ) -> windows::core::Result<()> {
         let url = HSTRING::from(m4a.as_os_str());
-        let attributes = MFCreateAttributes(1)?;
+        let mut attributes: Option<IMFAttributes> = None;
+        MFCreateAttributes(&mut attributes, 1)?;
+        let attributes = attributes.ok_or_else(|| {
+            windows::core::Error::from(windows::Win32::Foundation::E_FAIL)
+        })?;
         attributes.SetGUID(&MF_TRANSCODE_CONTAINERTYPE, &MFTranscodeContainerType_MPEG4)?;
         let writer: IMFSinkWriter = MFCreateSinkWriterFromURL(&url, None, &attributes)?;
 
