@@ -123,14 +123,14 @@ impl WindowsAudioEngine {
             let _ = inner.status_tx.send((StatusEvent::MicStarted, 0));
             // cpal requires a 'static + Send callback. Box the producer and
             // free it only after capture returns, so the callback never locks.
-            let producer = SendProducerPtr(Box::into_raw(Box::new(producer)));
+            let producer = SendProducerPtr::new(producer);
             let result =
                 native::run_microphone_capture(&stop_flag, move |samples, frames, ch, rate| {
-                    // SAFETY: the pointer stays live until capture returns.
-                    unsafe { push_pcm(&mut *producer.0, samples, frames, ch, rate) };
+                    // Call through the wrapper so the closure captures
+                    // SendProducerPtr (Send), not the raw *mut field.
+                    producer.push(samples, frames, ch, rate);
                 });
-            // SAFETY: capture has returned; no callback still holds the pointer.
-            drop(unsafe { Box::from_raw(producer.0) });
+            drop(producer);
             match result {
                 Ok(()) => {
                     let _ = inner.status_tx.send((StatusEvent::MicStopped, 0));
@@ -171,12 +171,34 @@ fn stop_capture(slot: &Mutex<Option<CaptureHandles>>) {
     }
 }
 
-/// Raw producer pointer for cpal's `'static + Send` mic callback. Safe only
-/// while the owning capture thread keeps the `Box` alive across the call.
+/// Raw producer pointer for cpal's `'static + Send` mic callback. Owns the
+/// boxed producer for the capture call; freed in `Drop` after capture returns.
 struct SendProducerPtr(*mut RingProducer);
-// SAFETY: the pointer is used only from the capture/callback threads that
-// own this recording; it is never shared with another producer owner.
+
+// SAFETY: used only from the capture/callback threads that own this
+// recording; never shared with another producer owner.
 unsafe impl Send for SendProducerPtr {}
+
+impl SendProducerPtr {
+    fn new(producer: RingProducer) -> Self {
+        Self(Box::into_raw(Box::new(producer)))
+    }
+
+    fn push(&self, samples: &[f32], frames: u32, channels: u32, sample_rate: f64) {
+        // SAFETY: the boxed producer lives until Drop, after capture returns.
+        unsafe { push_pcm(&mut *self.0, samples, frames, channels, sample_rate) };
+    }
+}
+
+impl Drop for SendProducerPtr {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: exclusive owner; capture has returned so no callback holds it.
+            drop(unsafe { Box::from_raw(self.0) });
+            self.0 = std::ptr::null_mut();
+        }
+    }
+}
 
 fn push_pcm(
     producer: &mut RingProducer,
