@@ -26,8 +26,6 @@ struct CaptureHandles {
 }
 
 struct EngineInner {
-    meeting_tx: Mutex<Option<RingProducer>>,
-    mic_tx: Mutex<Option<RingProducer>>,
     status_tx: mpsc::Sender<(StatusEvent, i32)>,
     meeting_capture: Mutex<Option<CaptureHandles>>,
     mic_capture: Mutex<Option<CaptureHandles>>,
@@ -41,8 +39,6 @@ impl WindowsAudioEngine {
     pub fn new() -> (Self, mpsc::Receiver<(StatusEvent, i32)>) {
         let (status_tx, status_rx) = mpsc::channel();
         let inner = Arc::new(EngineInner {
-            meeting_tx: Mutex::new(None),
-            mic_tx: Mutex::new(None),
             status_tx,
             meeting_capture: Mutex::new(None),
             mic_capture: Mutex::new(None),
@@ -82,16 +78,18 @@ impl WindowsAudioEngine {
         producer: RingProducer,
     ) -> Result<(), i32> {
         let pid = find_meeting_pid(app).ok_or(-2)?;
-        *self.inner.meeting_tx.lock().expect("meeting_tx") = Some(producer);
 
         let stop = Arc::new(AtomicBool::new(false));
         let inner = Arc::clone(&self.inner);
         let stop_flag = Arc::clone(&stop);
+        // The capture thread owns the producer for its lifetime, so the
+        // WASAPI callback path never takes a lock.
         let join = thread::spawn(move || {
+            let mut producer = producer;
             let _ = inner.status_tx.send((StatusEvent::SourceTapStarted, 0));
             let result =
                 native::run_process_loopback(pid, &stop_flag, |samples, frames, ch, rate| {
-                    push_pcm(&inner.meeting_tx, samples, frames, ch, rate);
+                    push_pcm(&mut producer, samples, frames, ch, rate);
                 });
             match result {
                 Ok(()) => {
@@ -112,21 +110,31 @@ impl WindowsAudioEngine {
     }
 
     pub fn stop_meeting_capture(&self) {
+        // Joins the capture thread before returning, so the producer is gone
+        // before any later start can install a new one.
         stop_capture(&self.inner.meeting_capture);
-        *self.inner.meeting_tx.lock().expect("meeting_tx") = None;
     }
 
     pub fn start_microphone_capture(&self, producer: RingProducer) -> Result<(), i32> {
-        *self.inner.mic_tx.lock().expect("mic_tx") = Some(producer);
         let stop = Arc::new(AtomicBool::new(false));
         let inner = Arc::clone(&self.inner);
         let stop_flag = Arc::clone(&stop);
         let join = thread::spawn(move || {
             let _ = inner.status_tx.send((StatusEvent::MicStarted, 0));
-            let callback_inner = Arc::clone(&inner);
-            match native::run_microphone_capture(&stop_flag, move |samples, frames, ch, rate| {
-                push_pcm(&callback_inner.mic_tx, samples, frames, ch, rate);
-            }) {
+            // cpal requires a 'static + Send callback. Box the producer and
+            // free it only after capture returns, so the callback never locks.
+            // Producer lives inside the callback closure and is dropped when
+            // run_microphone_capture returns and drops on_pcm.
+            let result =
+                native::run_microphone_capture(&stop_flag, {
+                    let producer = SendProducerPtr::new(producer);
+                    move |samples, frames, ch, rate| {
+                        // Call through the wrapper so the closure captures
+                        // SendProducerPtr (Send), not the raw *mut field.
+                        producer.push(samples, frames, ch, rate);
+                    }
+                });
+            match result {
                 Ok(()) => {
                     let _ = inner.status_tx.send((StatusEvent::MicStopped, 0));
                 }
@@ -146,7 +154,6 @@ impl WindowsAudioEngine {
 
     pub fn stop_microphone_capture(&self) {
         stop_capture(&self.inner.mic_capture);
-        *self.inner.mic_tx.lock().expect("mic_tx") = None;
     }
 }
 
@@ -167,8 +174,37 @@ fn stop_capture(slot: &Mutex<Option<CaptureHandles>>) {
     }
 }
 
+/// Raw producer pointer for cpal's `'static + Send` mic callback. Owns the
+/// boxed producer for the capture call; freed in `Drop` after capture returns.
+struct SendProducerPtr(*mut RingProducer);
+
+// SAFETY: used only from the capture/callback threads that own this
+// recording; never shared with another producer owner.
+unsafe impl Send for SendProducerPtr {}
+
+impl SendProducerPtr {
+    fn new(producer: RingProducer) -> Self {
+        Self(Box::into_raw(Box::new(producer)))
+    }
+
+    fn push(&self, samples: &[f32], frames: u32, channels: u32, sample_rate: f64) {
+        // SAFETY: the boxed producer lives until Drop, after capture returns.
+        unsafe { push_pcm(&mut *self.0, samples, frames, channels, sample_rate) };
+    }
+}
+
+impl Drop for SendProducerPtr {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: exclusive owner; capture has returned so no callback holds it.
+            drop(unsafe { Box::from_raw(self.0) });
+            self.0 = std::ptr::null_mut();
+        }
+    }
+}
+
 fn push_pcm(
-    slot: &Mutex<Option<RingProducer>>,
+    producer: &mut RingProducer,
     samples: &[f32],
     frames: u32,
     channels: u32,
@@ -178,11 +214,7 @@ fn push_pcm(
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
-    if let Ok(mut guard) = slot.lock() {
-        if let Some(producer) = guard.as_mut() {
-            producer.push(samples, frames, channels, sample_rate, host_time_ns);
-        }
-    }
+    producer.push(samples, frames, channels, sample_rate, host_time_ns);
 }
 
 fn meeting_path_fragments(app: MeetingAppId) -> &'static [&'static str] {
