@@ -57,9 +57,13 @@ struct WavLayout {
 }
 
 pub struct CheckpointingWavWriter {
+    /// Always positioned at end of file between calls: `create` leaves it
+    /// just past the header and `checkpoint` seeks back to the end.
     file: File,
     sample_rate: u32,
     frames_written: u64,
+    /// Reused encode buffer so each `write_samples` call is one write.
+    scratch: Vec<u8>,
 }
 
 impl CheckpointingWavWriter {
@@ -74,6 +78,7 @@ impl CheckpointingWavWriter {
             file,
             sample_rate,
             frames_written: 0,
+            scratch: Vec::new(),
         })
     }
 
@@ -83,14 +88,21 @@ impl CheckpointingWavWriter {
 
     /// Appends mono samples at the current end of the file. Values outside
     /// `[-1.0, 1.0]` are clipped before quantizing to 16-bit PCM.
+    ///
+    /// The whole batch goes to the OS in a single write rather than through a
+    /// userspace buffer, so a hard crash still leaves every sample that this
+    /// call accepted on disk for `repair_header` to recover.
     pub fn write_samples(&mut self, samples: &[f32]) -> io::Result<()> {
         if samples.is_empty() {
             return Ok(());
         }
-        self.file.seek(SeekFrom::End(0))?;
+        self.scratch.clear();
+        self.scratch.reserve(samples.len() * PCM16_BYTES_PER_SAMPLE as usize);
         for sample in samples {
-            self.file.write_all(&f32_to_i16(*sample).to_le_bytes())?;
+            self.scratch
+                .extend_from_slice(&f32_to_i16(*sample).to_le_bytes());
         }
+        self.file.write_all(&self.scratch)?;
         self.frames_written += samples.len() as u64;
         Ok(())
     }
@@ -335,6 +347,26 @@ mod tests {
 
         let samples = read_all_samples(&path).unwrap();
         assert_close(&samples, &[0.1, 0.2, 0.3, 0.4, 0.5]);
+    }
+
+    #[test]
+    fn many_small_writes_across_checkpoints_stay_contiguous() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.wav");
+        let mut writer = CheckpointingWavWriter::create(&path, 48_000).unwrap();
+        let mut expected = Vec::new();
+        for i in 0..50 {
+            let batch: Vec<f32> = (0..480).map(|j| ((i * 480 + j) % 100) as f32 / 200.0).collect();
+            writer.write_samples(&batch).unwrap();
+            expected.extend_from_slice(&batch);
+            if i % 7 == 0 {
+                writer.checkpoint().unwrap();
+            }
+        }
+        writer.finalize().unwrap();
+
+        let samples = read_all_samples(&path).unwrap();
+        assert_close(&samples, &expected);
     }
 
     #[test]

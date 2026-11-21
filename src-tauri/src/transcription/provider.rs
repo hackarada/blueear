@@ -1,12 +1,12 @@
 //! The contract every transcription engine implements, plus the registry that
 //! owns the concrete instances.
 //!
-//! Providers are deliberately narrow: given one finalized WAV file, return
-//! words and optionally speaker spans, reporting progress and honouring
-//! cancellation along the way. Everything else -- deciding which provider to
-//! use, naming speakers, persisting results, merging tracks -- belongs to
-//! `service.rs` and `merge.rs`, so that adding an engine never means
-//! reimplementing job semantics.
+//! Providers are deliberately narrow: given one finalized track file
+//! (`.m4a` or `.wav`), return words and optionally speaker spans, reporting
+//! progress and honouring cancellation along the way. Everything else --
+//! deciding which provider to use, naming speakers, persisting results,
+//! merging tracks -- belongs to `service.rs` and `merge.rs`, so that adding
+//! an engine never means reimplementing job semantics.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};

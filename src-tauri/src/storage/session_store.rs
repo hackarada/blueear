@@ -208,8 +208,14 @@ pub fn resolve_track_path(
         "meeting" | "teams" if metadata.meeting_wav.is_some() => {
             Some(paths.meeting_wav_for(metadata))
         }
-        "microphone" if metadata.microphone_wav.is_some() => Some(paths.microphone_wav()),
-        "mixed" if metadata.mixed_wav.is_some() => Some(paths.mixed_wav()),
+        "microphone" => metadata
+            .microphone_wav
+            .as_deref()
+            .map(|name| paths.dir.join(name)),
+        "mixed" => metadata
+            .mixed_wav
+            .as_deref()
+            .map(|name| paths.dir.join(name)),
         _ => None,
     }
 }
@@ -458,7 +464,7 @@ mod tests {
         let with_mix = sample_metadata("session-mixed", true);
         assert_eq!(
             resolve_track_path(&paths, &with_mix, "mixed"),
-            Some(paths.mixed_wav())
+            Some(paths.dir.join("mixed.wav"))
         );
         let no_mix = sample_metadata("session-no-mix", false);
         assert_eq!(resolve_track_path(&paths, &no_mix, "mixed"), None);
@@ -492,7 +498,30 @@ mod tests {
         let metadata = sample_metadata("session-with-mic", true);
         assert_eq!(
             resolve_track_path(&paths, &metadata, "microphone"),
-            Some(paths.microphone_wav())
+            Some(paths.dir.join("microphone.wav"))
+        );
+    }
+
+    #[test]
+    fn resolve_track_path_uses_aac_filenames_from_metadata() {
+        let paths = SessionPaths {
+            dir: PathBuf::from("/tmp/session"),
+        };
+        let mut metadata = sample_metadata("session-aac", true);
+        metadata.meeting_wav = Some("meeting.m4a".into());
+        metadata.microphone_wav = Some("microphone.m4a".into());
+        metadata.mixed_wav = Some("mixed.m4a".into());
+        assert_eq!(
+            resolve_track_path(&paths, &metadata, "meeting"),
+            Some(paths.dir.join("meeting.m4a"))
+        );
+        assert_eq!(
+            resolve_track_path(&paths, &metadata, "microphone"),
+            Some(paths.dir.join("microphone.m4a"))
+        );
+        assert_eq!(
+            resolve_track_path(&paths, &metadata, "mixed"),
+            Some(paths.dir.join("mixed.m4a"))
         );
     }
 

@@ -309,8 +309,12 @@ impl TranscriptionService {
             let request = TrackRequest {
                 track,
                 audio_path: match track {
-                    Track::Meeting => paths.meeting_wav(),
-                    Track::Microphone => paths.microphone_wav(),
+                    Track::Meeting => session_store::resolve_track_path(&paths, &metadata, "meeting")
+                        .unwrap_or_else(|| paths.meeting_wav()),
+                    Track::Microphone => {
+                        session_store::resolve_track_path(&paths, &metadata, "microphone")
+                            .unwrap_or_else(|| paths.microphone_wav())
+                    }
                 },
                 // Only the meeting track carries unknown speakers; the
                 // microphone track is the local user by construction.
