@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>Local-first audio capture for Teams and Zoom</strong><br>
-  Isolate meeting audio, optionally record your microphone, and save synchronized WAV tracks — nothing leaves your computer.
+  Isolate meeting audio, optionally record your microphone, and save synchronized AAC tracks — nothing leaves your computer.
 </p>
 
 <p align="center">
@@ -21,7 +21,7 @@
 
 A local-first desktop app that isolates native Microsoft Teams or Zoom meeting
 audio (Core Audio process taps on macOS; WASAPI process loopback on Windows),
-optionally records your microphone, and produces synchronized 16-bit PCM WAV
+optionally records your microphone, and produces synchronized AAC (`.m4a`)
 tracks for every session. Nothing is uploaded.
 
 ## Requirements
@@ -153,11 +153,15 @@ make live-test           # requires a real, running Teams or Zoom
 ```
 ~/Music/BlueEar/Recordings/          (or %USERPROFILE%\Music\BlueEar\Recordings)
 └── 2026-08-07_10-30-00/
-    ├── meeting.wav          16-bit PCM, 48 kHz, mono
-    ├── microphone.wav       omitted if microphone capture was off
-    ├── mixed.wav            omitted if microphone capture was off
+    ├── meeting.m4a          AAC, 96 kbps, 48 kHz, mono
+    ├── microphone.m4a       omitted if microphone capture was off
+    ├── mixed.m4a            omitted if microphone capture was off
     └── session.json
 ```
+
+Capture still writes crash-safe WAV, then transcodes to AAC when the session
+stops. If encoding fails, the WAV files are kept. Older sessions that already
+have `.wav` files continue to play and transcribe.
 
 ## Known limitations
 
@@ -165,7 +169,7 @@ make live-test           # requires a real, running Teams or Zoom
 - One meeting app per recording session.
 - Optional local transcription; off by default.
 - No calendar integration or automatic start/stop.
-- No lossy compression, custom output folders, or editing.
+- No custom output folders or editing.
 - macOS builds are ad-hoc signed / not notarized out of the box.
 
 ## License

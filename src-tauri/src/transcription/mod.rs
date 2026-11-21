@@ -3,7 +3,7 @@
 //! Nothing in this module runs unless the user has explicitly chosen a
 //! provider and that provider has passed its readiness check. Recording is
 //! entirely independent of it: a user who never opens the transcription
-//! settings gets WAV files and no transcript, which is the designed default,
+//! settings gets audio files and no transcript, which is the designed default,
 //! not a degraded state.
 //!
 //! The module boundaries follow the design spec at
@@ -29,6 +29,8 @@ pub mod service;
 pub mod store;
 pub mod types;
 pub mod whisper;
+#[cfg(feature = "whisper")]
+pub mod whisper_audio;
 
 use std::sync::Arc;
 

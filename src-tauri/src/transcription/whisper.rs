@@ -2,9 +2,14 @@
 //!
 //! Loads only from an app-owned `whisper-v1` model bundle. Probe never loads
 //! weights; inference runs only from `transcribe_track` after readiness.
+//! Audio is decoded and windowed in [`whisper_audio`] so a long meeting never
+//! lands as one giant PCM buffer in a single `full` call.
 
 use std::fs;
 use std::path::{Path, PathBuf};
+
+#[cfg(feature = "whisper")]
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState};
 
 use crate::error::{AppError, AppResult};
 use crate::transcription::model_import::WHISPER_BUNDLE_ID;
@@ -16,6 +21,10 @@ use crate::transcription::types::{
 };
 #[cfg(feature = "whisper")]
 use crate::transcription::types::Word;
+#[cfg(feature = "whisper")]
+use crate::transcription::whisper_audio::{
+    source_frames_to_target, PcmSource, StreamResampler, Windower, TARGET_SAMPLE_RATE,
+};
 
 pub struct WhisperProvider;
 
@@ -104,14 +113,85 @@ fn walk_bin(dir: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(feature = "whisper")]
+fn window_params(request: &TrackRequest) -> FullParams<'_, 'static> {
+    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    params.set_print_progress(false);
+    params.set_print_special(false);
+    params.set_print_realtime(false);
+    params.set_token_timestamps(true);
+    // Each window is independent: prior text must not seed hallucination loops.
+    params.set_no_context(true);
+    if let Some(lang) = request.language.as_deref() {
+        params.set_language(Some(lang));
+    }
+    params
+}
+
+#[cfg(feature = "whisper")]
+fn collect_words(
+    state: &WhisperState,
+    offset_seconds: f64,
+    words: &mut Vec<Word>,
+) -> AppResult<()> {
+    let n = state
+        .full_n_segments()
+        .map_err(|_| AppError::transcription_failed())?;
+    for i in 0..n {
+        let text = state
+            .full_get_segment_text(i)
+            .map_err(|_| AppError::transcription_failed())?
+            .trim()
+            .to_string();
+        if text.is_empty() {
+            continue;
+        }
+        let start = state
+            .full_get_segment_t0(i)
+            .map_err(|_| AppError::transcription_failed())? as f64
+            / 100.0
+            + offset_seconds;
+        let end = state
+            .full_get_segment_t1(i)
+            .map_err(|_| AppError::transcription_failed())? as f64
+            / 100.0
+            + offset_seconds;
+        let token_count = state.full_n_tokens(i).unwrap_or(0);
+        if token_count > 0 {
+            for t in 0..token_count {
+                if let Ok(token_text) = state.full_get_token_text(i, t) {
+                    let cleaned = token_text.trim();
+                    if cleaned.is_empty() || cleaned.starts_with('[') {
+                        continue;
+                    }
+                    if let Ok(data) = state.full_get_token_data(i, t) {
+                        words.push(Word {
+                            text: cleaned.to_string(),
+                            start_seconds: data.t0 as f64 / 100.0 + offset_seconds,
+                            end_seconds: data.t1 as f64 / 100.0 + offset_seconds,
+                            confidence: None,
+                        });
+                    }
+                }
+            }
+        } else {
+            words.push(Word {
+                text,
+                start_seconds: start,
+                end_seconds: end,
+                confidence: None,
+            });
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "whisper")]
 fn transcribe_with_whisper(
     request: &TrackRequest,
     ctx: &ProviderContext,
     cancel: &CancelToken,
     progress: &ProgressSink<'_>,
 ) -> AppResult<RawTrackResult> {
-    use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
-
     cancel.check()?;
     progress(0.05);
 
@@ -126,7 +206,9 @@ fn transcribe_with_whisper(
         .map(|s| s.to_string());
 
     let ctx_whisper = WhisperContext::new_with_params(
-        model_path.to_str().ok_or_else(AppError::transcription_failed)?,
+        model_path
+            .to_str()
+            .ok_or_else(AppError::transcription_failed)?,
         WhisperContextParameters::default(),
     )
     .map_err(|err| {
@@ -137,82 +219,45 @@ fn transcribe_with_whisper(
     cancel.check()?;
     progress(0.15);
 
-    let samples = load_wav_mono_16k(&request.audio_path)?;
-    cancel.check()?;
-    progress(0.25);
+    let source = PcmSource::open(&request.audio_path)?;
+    let estimated_total = source
+        .total_frames()
+        .map(|frames| source_frames_to_target(frames, source.sample_rate()));
+    let resampler = StreamResampler::new(source);
 
     let mut state = ctx_whisper.create_state().map_err(|err| {
         log::error!("whisper state failed: {err}");
         AppError::transcription_failed()
     })?;
 
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    params.set_print_progress(false);
-    params.set_print_special(false);
-    params.set_print_realtime(false);
-    params.set_token_timestamps(true);
-    if let Some(lang) = request.language.as_deref() {
-        params.set_language(Some(lang));
+    let mut words = Vec::new();
+    let mut saw_audio = false;
+
+    for window in Windower::new(resampler) {
+        cancel.check()?;
+        let window = window?;
+        saw_audio = true;
+
+        if !window.silent {
+            let params = window_params(request);
+            state.full(params, &window.samples).map_err(|err| {
+                log::error!("whisper full failed: {err}");
+                AppError::transcription_failed()
+            })?;
+            let offset = window.start_sample as f64 / f64::from(TARGET_SAMPLE_RATE);
+            collect_words(&state, offset, &mut words)?;
+        }
+
+        let fraction = match estimated_total {
+            Some(total) => window.end_fraction(total),
+            None => 0.5,
+        };
+        progress(0.15 + 0.8 * fraction);
     }
 
-    state.full(params, &samples).map_err(|err| {
-        log::error!("whisper full failed: {err}");
-        AppError::transcription_failed()
-    })?;
-
-    cancel.check()?;
-    progress(0.85);
-
-    let n = state.full_n_segments().map_err(|_| AppError::transcription_failed())?;
-    let mut words = Vec::new();
-    for i in 0..n {
-        cancel.check()?;
-        let text = state
-            .full_get_segment_text(i)
-            .map_err(|_| AppError::transcription_failed())?
-            .trim()
-            .to_string();
-        if text.is_empty() {
-            continue;
-        }
-        let start = state
-            .full_get_segment_t0(i)
-            .map_err(|_| AppError::transcription_failed())? as f64
-            / 100.0;
-        let end = state
-            .full_get_segment_t1(i)
-            .map_err(|_| AppError::transcription_failed())? as f64
-            / 100.0;
-        // Prefer token-level timings when available.
-        let token_count = state
-            .full_n_tokens(i)
-            .unwrap_or(0);
-        if token_count > 0 {
-            for t in 0..token_count {
-                if let Ok(token_text) = state.full_get_token_text(i, t) {
-                    let cleaned = token_text.trim();
-                    if cleaned.is_empty() || cleaned.starts_with('[') {
-                        continue;
-                    }
-                    if let Ok(data) = state.full_get_token_data(i, t) {
-                        words.push(Word {
-                            text: cleaned.to_string(),
-                            start_seconds: data.t0 as f64 / 100.0,
-                            end_seconds: data.t1 as f64 / 100.0,
-                            confidence: None,
-                        });
-                    }
-                }
-            }
-        } else {
-            words.push(Word {
-                text,
-                start_seconds: start,
-                end_seconds: end,
-                confidence: None,
-            });
-        }
-        progress(0.85 + 0.1 * ((i + 1) as f32 / n.max(1) as f32));
+    if !saw_audio {
+        log::error!("whisper audio produced no samples");
+        return Err(AppError::transcription_failed());
     }
 
     progress(1.0);
@@ -222,53 +267,6 @@ fn transcribe_with_whisper(
         model_id,
         language: request.language.clone(),
     })
-}
-
-/// Whisper.cpp expects mono f32 PCM at 16 kHz.
-#[cfg(feature = "whisper")]
-fn load_wav_mono_16k(path: &Path) -> AppResult<Vec<f32>> {
-    let mut reader = hound::WavReader::open(path).map_err(|err| {
-        log::error!("whisper wav open failed: {err}");
-        AppError::transcription_failed()
-    })?;
-    let spec = reader.spec();
-    let samples: Result<Vec<f32>, _> = match spec.sample_format {
-        hound::SampleFormat::Float => reader.samples::<f32>().collect(),
-        hound::SampleFormat::Int => reader
-            .samples::<i32>()
-            .map(|s| s.map(|v| v as f32 / (1i32 << (spec.bits_per_sample - 1)) as f32))
-            .collect(),
-    };
-    let interleaved = samples.map_err(|err| {
-        log::error!("whisper wav read failed: {err}");
-        AppError::transcription_failed()
-    })?;
-
-    let channels = spec.channels.max(1) as usize;
-    let mut mono = Vec::with_capacity(interleaved.len() / channels + 1);
-    for frame in interleaved.chunks(channels) {
-        let sum: f32 = frame.iter().copied().sum();
-        mono.push(sum / channels as f32);
-    }
-
-    if spec.sample_rate == 16_000 {
-        return Ok(mono);
-    }
-
-    // Linear resample to 16 kHz.
-    let ratio = 16_000.0 / spec.sample_rate as f64;
-    let out_len = ((mono.len() as f64) * ratio).round().max(1.0) as usize;
-    let mut out = vec![0.0f32; out_len];
-    for (i, sample) in out.iter_mut().enumerate() {
-        let src = i as f64 / ratio;
-        let i0 = src.floor() as usize;
-        let i1 = (i0 + 1).min(mono.len().saturating_sub(1));
-        let frac = (src - i0 as f64) as f32;
-        let a = mono.get(i0).copied().unwrap_or(0.0);
-        let b = mono.get(i1).copied().unwrap_or(a);
-        *sample = a + (b - a) * frac;
-    }
-    Ok(out)
 }
 
 #[cfg(test)]
@@ -282,6 +280,11 @@ mod tests {
         let ctx = ProviderContext {
             models_root: PathBuf::from("/nonexistent/blueear-models"),
         };
-        assert_eq!(provider.probe(&ctx), Some(NotReadyReason::ModelsMissing));
+        let expected = if cfg!(feature = "whisper") {
+            NotReadyReason::ModelsMissing
+        } else {
+            NotReadyReason::NotBuilt
+        };
+        assert_eq!(provider.probe(&ctx), Some(expected));
     }
 }

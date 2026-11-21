@@ -25,6 +25,7 @@ use crate::audio::{MeetingAppId, PlatformAudioEngine, StatusEvent};
 use crate::error::{AppError, AppResult};
 use crate::paths;
 use crate::storage::session_store::{self, SessionMetadata, SessionPaths};
+use crate::storage::transcode;
 use crate::storage::wav_writer::CheckpointingWavWriter;
 
 use super::state::SessionState;
@@ -536,6 +537,33 @@ impl SessionManager {
         let duration_seconds =
             outcome.meeting_frames.max(outcome.mic_frames) as f64 / CANONICAL_SAMPLE_RATE as f64;
 
+        // Keep the crash-safe WAVs when the session already failed to write
+        // or the disk is full. Otherwise replace them with 96 kbps AAC.
+        let keep_wav = outcome.disk_full || outcome.write_failed;
+        let meeting_name = if keep_wav {
+            "meeting.wav".to_string()
+        } else {
+            transcode::replace_wav_with_aac(&active.paths.meeting_wav())
+        };
+        let microphone_name = if active.mic_enabled {
+            Some(if keep_wav {
+                "microphone.wav".to_string()
+            } else {
+                transcode::replace_wav_with_aac(&active.paths.microphone_wav())
+            })
+        } else {
+            None
+        };
+        let mixed_name = if active.mic_enabled {
+            Some(if keep_wav {
+                "mixed.wav".to_string()
+            } else {
+                transcode::replace_wav_with_aac(&active.paths.mixed_wav())
+            })
+        } else {
+            None
+        };
+
         let metadata = SessionMetadata {
             schema_version: session_store::SCHEMA_VERSION,
             session_id: active.session_id.clone(),
@@ -548,17 +576,9 @@ impl SessionManager {
             dropped_meeting_frames: outcome.dropped_meeting_frames,
             dropped_mic_frames: outcome.dropped_mic_frames,
             sample_rate: CANONICAL_SAMPLE_RATE,
-            meeting_wav: Some("meeting.wav".to_string()),
-            microphone_wav: if active.mic_enabled {
-                Some("microphone.wav".to_string())
-            } else {
-                None
-            },
-            mixed_wav: if active.mic_enabled {
-                Some("mixed.wav".to_string())
-            } else {
-                None
-            },
+            meeting_wav: Some(meeting_name),
+            microphone_wav: microphone_name,
+            mixed_wav: mixed_name,
             source_app: active.source_app,
             app_bundle_id: crate::APP_BUNDLE_ID.to_string(),
             app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -599,7 +619,8 @@ impl SessionManager {
         let paths = session_store::find_session_by_id(session_id)
             .map_err(|_| AppError::internal("find_session_by_id"))?
             .ok_or_else(AppError::session_not_found)?;
-        let target = reveal_target(&paths);
+        let metadata = session_store::read_metadata(&paths).ok();
+        let target = reveal_target(&paths, metadata.as_ref());
 
         // SECURITY-REVIEW: reveals a path resolved entirely server-side from a
         // generated session ID looked up on disk -- never from a
@@ -699,19 +720,31 @@ fn current_platform() -> &'static str {
 
 const MIX_LOOKAHEAD_CAP: usize = CANONICAL_SAMPLE_RATE as usize * 5;
 
-/// Prefer a real WAV so Finder/Explorer can select a file; fall back to the
-/// session directory if nothing was written (should not happen for finalized
-/// sessions).
-fn reveal_target(paths: &SessionPaths) -> std::path::PathBuf {
-    [
+/// Prefer a real audio file so Finder/Explorer can select it; fall back to
+/// the session directory if nothing was written (should not happen for
+/// finalized sessions).
+fn reveal_target(paths: &SessionPaths, metadata: Option<&SessionMetadata>) -> std::path::PathBuf {
+    let mut candidates = Vec::new();
+    if let Some(meta) = metadata {
+        for track in ["mixed", "meeting", "microphone"] {
+            if let Some(path) = session_store::resolve_track_path(paths, meta, track) {
+                candidates.push(path);
+            }
+        }
+    }
+    candidates.extend([
+        paths.dir.join("mixed.m4a"),
         paths.mixed_wav(),
+        paths.dir.join("meeting.m4a"),
         paths.meeting_wav(),
         paths.dir.join("teams.wav"),
+        paths.dir.join("microphone.m4a"),
         paths.microphone_wav(),
-    ]
-    .into_iter()
-    .find(|p| p.exists())
-    .unwrap_or_else(|| paths.dir.clone())
+    ]);
+    candidates
+        .into_iter()
+        .find(|p| p.exists())
+        .unwrap_or_else(|| paths.dir.clone())
 }
 
 fn write_samples_checked(

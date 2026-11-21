@@ -19,7 +19,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # `tauri.conf.json` → `build.features` for `tauri dev` / `tauri build`.
 default = ["whisper"]
 # Shared Whisper.cpp provider (whisper-rs). Requires cmake + a C++ toolchain.
-whisper = ["dep:whisper-rs"]
+whisper = ["dep:whisper-rs", "dep:symphonia"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -39,6 +39,8 @@ sha2 = "0.10"
 dirs = "5"
 # Optional Whisper.cpp bindings; inert until the provider is selected and ready.
 whisper-rs = { version = "0.13", optional = true }
+# Decodes AAC/.m4a for Whisper after recordings are transcoded on stop.
+symphonia = { version = "0.5", optional = true, default-features = false, features = ["aac", "isomp4"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -50,6 +52,7 @@ libc = "0.2"
 windows = { version = "0.58", features = [
   "Win32_Foundation",
   "Win32_Media_Audio",
+  "Win32_Media_MediaFoundation",
   "Win32_Security",
   "Win32_Storage_FileSystem",
   "Win32_System_Com",
