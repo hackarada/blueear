@@ -1050,9 +1050,27 @@ impl RecordingWorker {
         }
     }
 
-    let dropped_meeting_frames = meeting_rx.dropped_count();
-    let dropped_mic_frames = mic_rx.as_ref().map(|r| r.dropped_count()).unwrap_or(0);
+    let dropped_meeting_frames = meeting_rx.dropped_frames();
+    let dropped_mic_frames = mic_rx.as_ref().map(|r| r.dropped_frames()).unwrap_or(0);
     let write_failed = io_failed_flag.load(Ordering::Relaxed);
+
+    let log_ring = |name: &str, rx: &RingConsumer| {
+        let dropped = rx.dropped_frames();
+        let message = format!(
+            "{name} ring: dropped {dropped} frames, peak fill {}/{} chunks",
+            rx.peak_fill(),
+            rx.capacity()
+        );
+        if dropped > 0 {
+            log::warn!("{message}");
+        } else {
+            log::info!("{message}");
+        }
+    };
+    log_ring("meeting", &meeting_rx);
+    if let Some(rx) = mic_rx.as_ref() {
+        log_ring("microphone", rx);
+    }
 
     let meeting_frames = meeting_writer.finalize().unwrap_or(0);
     let mic_frames = if let Some(w) = mic_writer {
@@ -1161,7 +1179,7 @@ mod live_tests {
                     }
                 }
             }
-            (total_frames, peak, consumer.dropped_count())
+            (total_frames, peak, consumer.dropped_frames())
         });
 
         std::thread::sleep(Duration::from_secs(5));
@@ -1176,7 +1194,7 @@ mod live_tests {
         );
         assert_eq!(
             dropped, 0,
-            "ring buffer dropped chunks even with continuous draining; \
+            "ring buffer dropped frames even with continuous draining; \
              the recording worker's consumer loop may be too slow"
         );
         assert!(

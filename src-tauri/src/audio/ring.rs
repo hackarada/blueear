@@ -89,7 +89,7 @@ impl RingProducer {
         chunk.host_time_ns = host_time_ns;
 
         if self.inner.push(chunk).is_err() {
-            self.dropped.fetch_add(1, Ordering::Relaxed);
+            self.dropped.fetch_add(u64::from(actual_frames), Ordering::Relaxed);
         }
     }
 }
@@ -97,15 +97,31 @@ impl RingProducer {
 pub struct RingConsumer {
     inner: Consumer<AudioChunk>,
     dropped: Arc<AtomicU64>,
+    peak_fill: usize,
 }
 
 impl RingConsumer {
     pub fn pop(&mut self) -> Option<AudioChunk> {
+        let fill = self.inner.slots();
+        if fill > self.peak_fill {
+            self.peak_fill = fill;
+        }
         self.inner.pop().ok()
     }
 
-    pub fn dropped_count(&self) -> u64 {
+    /// Source-rate frames the producer discarded because the ring was full.
+    pub fn dropped_frames(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
+    }
+
+    /// Most chunks ever waiting in the ring when the consumer came to read.
+    /// Approaching [`RING_CAPACITY`] means the consumer is close to dropping.
+    pub fn peak_fill(&self) -> usize {
+        self.peak_fill
+    }
+
+    pub fn capacity(&self) -> usize {
+        RING_CAPACITY
     }
 }
 
@@ -120,6 +136,7 @@ pub fn channel() -> (RingProducer, RingConsumer) {
         RingConsumer {
             inner: consumer,
             dropped,
+            peak_fill: 0,
         },
     )
 }
@@ -142,13 +159,18 @@ mod tests {
     }
 
     #[test]
-    fn full_ring_drops_and_counts_instead_of_blocking() {
-        let (mut tx, rx) = channel();
+    fn full_ring_drops_and_counts_frames_instead_of_blocking() {
+        let (mut tx, mut rx) = channel();
         let samples = [0.0_f32; 4];
         for _ in 0..(RING_CAPACITY + 10) {
             tx.push(&samples, 2, 2, 48000.0, 0);
         }
-        assert!(rx.dropped_count() > 0);
+        // Ten 2-frame chunks did not fit.
+        assert_eq!(rx.dropped_frames(), 20);
+
+        rx.pop();
+        assert_eq!(rx.peak_fill(), RING_CAPACITY);
+        assert_eq!(rx.capacity(), RING_CAPACITY);
     }
 
     #[test]
