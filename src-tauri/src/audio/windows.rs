@@ -123,14 +123,17 @@ impl WindowsAudioEngine {
             let _ = inner.status_tx.send((StatusEvent::MicStarted, 0));
             // cpal requires a 'static + Send callback. Box the producer and
             // free it only after capture returns, so the callback never locks.
-            let producer = SendProducerPtr::new(producer);
+            // Producer lives inside the callback closure and is dropped when
+            // run_microphone_capture returns and drops on_pcm.
             let result =
-                native::run_microphone_capture(&stop_flag, move |samples, frames, ch, rate| {
-                    // Call through the wrapper so the closure captures
-                    // SendProducerPtr (Send), not the raw *mut field.
-                    producer.push(samples, frames, ch, rate);
+                native::run_microphone_capture(&stop_flag, {
+                    let producer = SendProducerPtr::new(producer);
+                    move |samples, frames, ch, rate| {
+                        // Call through the wrapper so the closure captures
+                        // SendProducerPtr (Send), not the raw *mut field.
+                        producer.push(samples, frames, ch, rate);
+                    }
                 });
-            drop(producer);
             match result {
                 Ok(()) => {
                     let _ = inner.status_tx.send((StatusEvent::MicStopped, 0));
